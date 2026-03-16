@@ -28,15 +28,15 @@ const STORAGE_KEY = 'fc_director_ai';
 const BASE_COOLDOWN_MS = 30_000;       // 30s minimum between trades
 const MAX_IMPACT_PCT = 8;              // Pause if slippage > 8%
 const MAX_SELL_RATIO = 0.40;           // Never sell more than 40% of wallet FC
-const MIN_POOL_ETH = 0.0001;           // Pause if pool ETH below this
-const MIN_ETH_OUTPUT = 0.000001;       // Floor for swap output
-const GAS_COST_ETH = 0.00002;          // ~$0.05 gas on Base (L2)
-const GAS_RESERVE_ETH = 0.002;         // Keep ~$5 ETH for gas always
+const MIN_POOL_ETH = 0.0000001;        // Allow micro-pools — don't block tiny liquidity
+const MIN_ETH_OUTPUT = 0.0000001;      // Accept dust output — keep trading
+const GAS_COST_ETH = 0.000005;         // Base L2 actual gas ~$0.001
+const GAS_RESERVE_ETH = 0.0002;        // ~$0.50 on Base — enough for 20+ txs
 const MAX_DRAIN_PCT = 0.02;            // Never drain >2% of pool per swap
 const SCALE_RAMP_FACTOR = 0.5;         // Use 50% of max-drain budget (conservative)
 
 // Swap size ramp — grows with pool depth
-const MIN_SWAP_FC = 1;                 // Floor: 1 FC
+const MIN_SWAP_FC = 0.001;             // Fractional trades — most crypto is fractions
 const MAX_SWAP_FC = 5000;              // Ceiling: 5000 FC per swap
 
 // Tier thresholds (matches config.js TIERS)
@@ -148,8 +148,8 @@ class FCDirectorAI {
 
   // ─── Adaptive Swap Sizing ──────────────────────────────────
   _calcSwapAmount(reserveFC, reserveETH, walletFC, ethUsd) {
-    if (reserveFC < 1 || reserveETH < 0.000001) {
-      return { amount: 0, reason: `Pool too small (${reserveFC.toFixed(0)} FC / ${reserveETH.toFixed(8)} ETH)` };
+    if (reserveFC < 0.001 || reserveETH < 0.0000001) {
+      return { amount: 0, reason: `Pool too small (${reserveFC.toFixed(4)} FC / ${reserveETH.toFixed(10)} ETH)` };
     }
 
     // 1. Max drain budget
@@ -312,21 +312,21 @@ class FCDirectorAI {
         // Don't sell FC → ETH (circular drain). Add wallet ETH + FC directly.
         const spendableETH = Math.max(walletETH - GAS_RESERVE_ETH, 0);
         const availableETH = spendableETH * 0.3; // Only 30% per cycle
-        if (availableETH < 0.00005) {
+        if (availableETH < 0.0000001) {
           this._blocker = `Growth mode: need more ETH. Have ${walletETH.toFixed(6)}, reserve ${GAS_RESERVE_ETH}`;
           return;
         }
 
         const poolRatio = reserveFC / reserveETH;
-        const fcNeeded = Math.floor(availableETH * poolRatio);
-        if (fcNeeded < 1 || walletFC < fcNeeded) {
-          this._blocker = `Growth mode: need ${fcNeeded} FC to pair with ${availableETH.toFixed(6)} ETH`;
+        const fcNeeded = availableETH * poolRatio;  // Fractional — no floor
+        if (fcNeeded < 0.001 || walletFC < fcNeeded) {
+          this._blocker = `Growth mode: need ${fcNeeded.toFixed(4)} FC to pair with ${availableETH.toFixed(6)} ETH`;
           return;
         }
 
-        const fcToAdd = Math.min(fcNeeded, Math.floor(walletFC * 0.10));
+        const fcToAdd = Math.min(fcNeeded, walletFC * 0.10);  // Fractional
         const ethToAdd = Math.min(fcToAdd / poolRatio, availableETH);
-        if (ethToAdd < 0.00003) return;
+        if (ethToAdd < 0.0000001) return;
 
         // Cooldown
         if (Date.now() - this._lastSwapTime < BASE_COOLDOWN_MS) return;
@@ -382,14 +382,14 @@ class FCDirectorAI {
           this._state.totalEthProfit += profitETH;
           this._state.reinvestCount++;
 
-          if (reinvestETH > 0.00005) {
+          if (reinvestETH > 0.0000001) {
             // Re-read wallet ETH to make sure we have enough
             const freshETH = await getETHBalance(account);
             const safeReinvest = Math.min(reinvestETH, Math.max(freshETH - GAS_RESERVE_ETH, 0) * 0.4);
-            if (safeReinvest > 0.00003) {
+            if (safeReinvest > 0.0000001) {
               const ratio = reserveFC / reserveETH;
-              const fcForReinvest = Math.min(Math.floor(safeReinvest * ratio), Math.floor(walletFC * 0.25));
-              if (fcForReinvest >= 1) {
+              const fcForReinvest = Math.min(safeReinvest * ratio, walletFC * 0.25);  // Fractional
+              if (fcForReinvest >= 0.001) {
                 await this._addLiquidity(account, fcForReinvest, safeReinvest);
                 this._state.totalEthReinvested += safeReinvest;
               }
@@ -492,7 +492,7 @@ class FCDirectorAI {
     try {
       // Approve FC for router
       const routerPad = UNISWAP_ROUTER.slice(2).toLowerCase().padStart(64, '0');
-      const approveAmt = BigInt(fcAmount) * BigInt('1000000000000000000');
+      const approveAmt = BigInt(Math.floor(fcAmount * 1e18));  // Fractional FC → wei
       const approveData = SEL.approve + routerPad + approveAmt.toString(16).padStart(64, '0');
       const approveTx = await eth.request({
         method: 'eth_sendTransaction',
@@ -503,7 +503,7 @@ class FCDirectorAI {
 
       // addLiquidityETH
       const tokenDesired = approveAmt;
-      const tokenMin = BigInt(Math.floor(fcAmount * 0.9)) * BigInt('1000000000000000000');
+      const tokenMin = BigInt(Math.floor(fcAmount * 0.9 * 1e18));
       const ethMin = BigInt(Math.floor(ethAmount * 0.9 * 1e18));
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
       const toHex = account.slice(2).toLowerCase().padStart(64, '0');
