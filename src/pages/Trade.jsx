@@ -35,10 +35,28 @@ function DirectorPanel({ chain }) {
         </span>
       </div>
 
-      {/* Blocker / Status */}
+      {/* Blocker / Status — with actionable fix buttons */}
       {status.blocker && (
         <div style={{ background: '#1a1a2e', border: '1px solid #f59e0b', borderRadius: 8, padding: 12, marginBottom: 12, color: '#f59e0b', fontSize: 13 }}>
           <strong>Waiting:</strong> {status.blocker}
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            {/[Ww]allet|[Cc]onnect/.test(status.blocker) && (
+              <button className="btn btn-primary" style={{ fontSize: 12, padding: '6px 12px' }} onClick={async () => {
+                try { await window.ethereum?.request({ method: 'eth_requestAccounts' }); } catch {}
+              }}>Connect Wallet</button>
+            )}
+            {/[Bb]ase|[Cc]hain|[Ss]witch/.test(status.blocker) && (
+              <button className="btn btn-primary" style={{ fontSize: 12, padding: '6px 12px' }} onClick={async () => {
+                try { await window.ethereum?.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x2105' }] }); } catch {}
+              }}>Switch to Base</button>
+            )}
+            {/[Gg]as|ETH/.test(status.blocker) && (
+              <a href="https://www.coinbase.com/price/ethereum" target="_blank" rel="noreferrer" className="btn btn-outline" style={{ fontSize: 12, padding: '6px 12px' }}>Get ETH on Coinbase</a>
+            )}
+            {/[Pp]air|[Pp]ool|liquidity/.test(status.blocker) && (
+              <button className="btn btn-primary" style={{ fontSize: 12, padding: '6px 12px' }} onClick={() => window.scrollTo({ top: document.querySelector('.section')?.offsetTop || 0, behavior: 'smooth' })}>Add Liquidity Below</button>
+            )}
+          </div>
         </div>
       )}
       {status.pauseReason && (
@@ -164,6 +182,30 @@ export default function Trade({ chain, wallet }) {
           color="#f59e0b"
         />
       </div>
+
+      {/* Wallet not connected — prompt to connect */}
+      {!wallet.account && (
+        <div className="section" style={{ borderLeft: '3px solid #f59e0b' }}>
+          <h2 style={{ color: '#f59e0b' }}>Connect Your Wallet</h2>
+          <p className="section-sub">Connect MetaMask to start trading FC. The Director AI needs wallet access to execute trades.</p>
+          <button className="btn btn-primary" onClick={async () => {
+            try { await window.ethereum?.request({ method: 'eth_requestAccounts' }); } catch {}
+          }}>Connect MetaMask</button>
+        </div>
+      )}
+
+      {/* Wrong network — prompt to switch */}
+      {wallet.account && !wallet.isBase && (
+        <div className="section" style={{ borderLeft: '3px solid #ef4444' }}>
+          <h2 style={{ color: '#ef4444' }}>Wrong Network</h2>
+          <p className="section-sub">You're connected but not on Base. FC trades on the Base network.</p>
+          <button className="btn btn-primary" onClick={async () => {
+            try { await window.ethereum?.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x2105' }] }); } catch(e) {
+              if (e.code === 4902) { try { await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x2105', chainName: 'Base', nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: ['https://mainnet.base.org'], blockExplorerUrls: ['https://basescan.org'] }] }); } catch {} }
+            }
+          }}>Switch to Base Network</button>
+        </div>
+      )}
 
       {/* Director AI — shows when pool exists and wallet connected */}
       {wallet.account && wallet.isBase && tradingReady && (
@@ -326,7 +368,7 @@ export default function Trade({ chain, wallet }) {
           </div>
           <div className="rule">
             <strong>Gas reserve always maintained</strong>
-            <p>Director keeps 0.002 ETH (~$5) reserved for gas at all times. Never runs dry.</p>
+            <p>Director keeps 0.0002 ETH (~$0.50) reserved for gas at all times. Never runs dry.</p>
           </div>
           <div className="rule">
             <strong>Adaptive scaling</strong>
