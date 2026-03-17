@@ -76,10 +76,21 @@ function DirectorPanel({ chain }) {
 
       {/* Stats */}
       <div className="stats-grid stats-grid-4">
-        <StatCard label="Cycles" value={status.cycleCount} sub="Total rounds" color="#3b82f6" />
+        <StatCard label="Trades" value={status.totalSwapCount || 0} sub={`${status.cycleCount} cycles`} color="#3b82f6" />
         <StatCard label="FC Sold" value={fmt(status.totalFcSold, 2)} sub="Total swapped" color="#00ffcc" />
         <StatCard label="ETH Earned" value={fmt(status.totalEthEarned, 6)} sub={'$' + fmt(status.totalUsdEarned)} color="#f59e0b" />
-        <StatCard label="ETH Profit" value={fmt(status.totalEthProfit, 6)} sub={'$' + fmt(status.profitUsd)} color="#10b981" />
+        <StatCard
+          label="Net Profit"
+          value={fmt(status.netProfitEth || 0, 6)}
+          sub={'$' + fmt(status.netProfitUsd || 0) + ' (after gas)'}
+          color={(status.netProfitEth || 0) >= 0 ? '#10b981' : '#ef4444'}
+        />
+      </div>
+
+      {/* Gas P&L breakdown */}
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, fontSize: 12, color: '#888' }}>
+        <span>Gas spent: {fmt(status.totalGasSpent || 0, 8)} ETH (${fmt(status.totalGasSpentUsd || 0)})</span>
+        <span>Avg gas/trade: {status.totalSwapCount > 0 ? fmt((status.totalGasSpent || 0) / status.totalSwapCount, 8) : '—'} ETH</span>
       </div>
 
       {/* Scaling Info */}
@@ -104,7 +115,6 @@ function DirectorPanel({ chain }) {
         <span>Gas runway: ~{status.gasRunwayTxs || '?'} txs</span>
         <span>Max drain: {status.maxDrainPct}%/trade</span>
         <span>Max impact: {status.maxImpactPct}%</span>
-        <span>Reinvested: {fmt(status.totalEthReinvested, 6)} ETH</span>
       </div>
 
       {/* Recent Swaps */}

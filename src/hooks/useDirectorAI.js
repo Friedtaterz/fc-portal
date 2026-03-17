@@ -35,7 +35,7 @@ const MAX_IMPACT_PCT = 8;              // Pause if slippage > 8%
 const MAX_SELL_RATIO = 0.40;           // Never sell more than 40% of wallet FC
 const MIN_POOL_ETH = 0.0000001;        // Allow micro-pools — don't block tiny liquidity
 const MIN_ETH_OUTPUT = 0.0000001;      // Accept dust output — keep trading
-const GAS_COST_ETH = 0.000015;         // Actual gas per tx on Base (~approve + swap)
+const GAS_COST_ETH = 0.000003;         // Actual Base L2 gas per tx (~0.01 gwei, 250K gas)
 const MAX_DRAIN_PCT = 0.02;            // Never drain >2% of pool per swap
 const SCALE_RAMP_FACTOR = 0.5;         // Use 50% of max-drain budget (conservative)
 
@@ -120,7 +120,9 @@ class FCDirectorAI {
     this._state.totalEthEarned = this._state.totalEthEarned || 0;
     this._state.totalEthReinvested = this._state.totalEthReinvested || 0;
     this._state.totalEthProfit = this._state.totalEthProfit || 0;
+    this._state.totalGasSpent = this._state.totalGasSpent || 0;
     this._state.totalFcSold = this._state.totalFcSold || 0;
+    this._state.totalSwapCount = this._state.totalSwapCount || 0;
     this._state.reinvestCount = this._state.reinvestCount || 0;
     this._state.cycleCount = this._state.cycleCount || 0;
     this._state.profitLog = this._state.profitLog || [];
@@ -361,6 +363,9 @@ class FCDirectorAI {
       if (sizing.ethOut < MIN_ETH_OUTPUT) { this._blocker = `Output too low: ${sizing.ethOut.toFixed(8)} ETH`; return; }
       if (Date.now() - this._lastSwapTime < (sizing.cooldownMs * cycleCooldownMultiplier) - 1000) return;
 
+      // Measure ETH before swap to track actual gas spent
+      const ethBefore = await getETHBalance(account);
+
       // Execute swap
       const result = await this._executeSwap(account, sizing.amount, sizing.ethOut);
       if (!result.success) {
@@ -368,11 +373,20 @@ class FCDirectorAI {
         return;
       }
 
+      // Measure ETH after swap to calculate real gas + real earnings
+      const ethAfter = await getETHBalance(account);
+      const netChange = ethAfter - ethBefore; // Positive = wallet grew
+      const actualGas = result.ethReceived - netChange; // What we earned minus what wallet gained = gas
+      if (actualGas > 0) this._state.totalGasSpent += actualGas;
+
       this._lastSwapTime = Date.now();
       this._state.totalFcSold += sizing.amount;
+      this._state.totalSwapCount++;
       this._state.totalEthEarned += result.ethReceived;
       this._state.swapLog.push({
         time: Date.now(), fc: sizing.amount, eth: result.ethReceived,
+        gas: actualGas > 0 ? actualGas : GAS_COST_ETH,
+        net: netChange,
         txHash: result.hash, impact: sizing.priceImpact, drain: sizing.poolDrainPct,
       });
 
@@ -600,11 +614,16 @@ class FCDirectorAI {
       // Logs
       recentSwaps: (this._state.swapLog || []).slice(-10).reverse(),
       recentProfitSplits: (this._state.profitLog || []).slice(-5).reverse(),
-      // Gas runway
+      // Gas & P&L
       gasReserve: GAS_RESERVE_ETH,
       gasRunwayTxs: this._gasRunway || 0,
       gasWarning: this._gasWarning || null,
       gasCostPerTx: GAS_COST_ETH,
+      totalGasSpent: this._state.totalGasSpent,
+      totalGasSpentUsd: this._state.totalGasSpent * ethUsd,
+      totalSwapCount: this._state.totalSwapCount,
+      netProfitEth: this._state.totalEthEarned - this._state.totalGasSpent - this._state.totalEthReinvested,
+      netProfitUsd: (this._state.totalEthEarned - this._state.totalGasSpent - this._state.totalEthReinvested) * ethUsd,
       // Config
       maxDrainPct: MAX_DRAIN_PCT * 100,
       maxImpactPct: MAX_IMPACT_PCT,
