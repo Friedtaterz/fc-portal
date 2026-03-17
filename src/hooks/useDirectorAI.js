@@ -10,14 +10,19 @@
  *   - Scaling ($100K-$10M): 50% profit / 50% reinvest
  *   - Trust Mode (>$10M): 80% profit / 20% reinvest
  *
+ * CORE RULE: Every trade must make the wallet richer, never poorer.
+ *   The Director NEVER spends the user's ETH. It only spends gas,
+ *   and every trade must return more ETH than the gas costs.
+ *
  * SAFETY:
+ *   - Every trade must be gas-positive (output > 2x gas cost)
+ *   - Gas runway: always keeps enough for 50+ future transactions
+ *   - Slows down as gas gets low (75 txs), stops at 50 txs
  *   - Adaptive swap size (never drains >2% of pool)
- *   - Gas reserve always maintained (never runs wallet dry)
  *   - Dynamic cooldown (bigger swaps = longer waits)
  *   - Auto-pause on price impact >8%
- *   - Gas-positive only (swap output must exceed gas cost)
  *   - Never sells more than 40% of wallet FC
- *   - Ramps from micro-trades to larger ones as pool grows
+ *   - Reinvest only uses EARNED ETH, never original wallet ETH
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -186,16 +191,17 @@ class FCDirectorAI {
     const fcIn = amount * 0.997; // 0.3% fee
     const ethOut = (fcIn * y) / (x + fcIn);
 
-    // Check gas-positive
-    if (ethOut < GAS_COST_ETH * 1.5) {
+    // MUST be gas-positive: output must exceed gas cost by at least 2x
+    // This ensures every trade grows the wallet, never shrinks it
+    if (ethOut < GAS_COST_ETH * 2) {
       // Try bigger swap up to 5% drain
       const bigAmount = Math.min(reserveFC * 0.05, walletCap, MAX_SWAP_FC, walletFC);
       const bigFcIn = bigAmount * 0.997;
       const bigEthOut = (bigFcIn * y) / (x + bigFcIn);
-      if (bigEthOut >= GAS_COST_ETH * 1.5) {
+      if (bigEthOut >= GAS_COST_ETH * 2) {
         amount = bigAmount;
       } else {
-        return { amount: 0, reason: `Output ${ethOut.toFixed(8)} ETH < gas cost. Pool needs more liquidity.` };
+        return { amount: 0, reason: `Trade not profitable enough (${ethOut.toFixed(8)} ETH output vs ${GAS_COST_ETH} gas). Waiting for better conditions.` };
       }
     }
 
@@ -338,44 +344,12 @@ class FCDirectorAI {
         cycleCooldownMultiplier = 1 + (GAS_SLOWDOWN_TXS - gasRunwayTxs) / (GAS_SLOWDOWN_TXS - MIN_GAS_RUNWAY_TXS) * 3;
       }
 
-      // ─── GROWTH MODE: Add liquidity directly ─────────────
-      if (tier.profitRatio === 0) {
-        // Don't sell FC → ETH (circular drain). Add wallet ETH + FC directly.
-        // IMPORTANT: Never dip into gas runway for liquidity adds
-        const spendableETH = Math.max(walletETH - GAS_RESERVE_ETH, 0);
-        const availableETH = spendableETH * 0.3; // Only 30% per cycle, AFTER gas reserve
-        if (availableETH < 0.0000001) {
-          this._blocker = `Growth mode: need more ETH. Have ${walletETH.toFixed(6)}, reserve ${GAS_RESERVE_ETH}`;
-          return;
-        }
-
-        const poolRatio = reserveFC / reserveETH;
-        const fcNeeded = availableETH * poolRatio;  // Fractional — no floor
-        if (fcNeeded < 0.001 || walletFC < fcNeeded) {
-          this._blocker = `Growth mode: need ${fcNeeded.toFixed(4)} FC to pair with ${availableETH.toFixed(6)} ETH`;
-          return;
-        }
-
-        const fcToAdd = Math.min(fcNeeded, walletFC * 0.10);  // Fractional
-        const ethToAdd = Math.min(fcToAdd / poolRatio, availableETH);
-        if (ethToAdd < 0.0000001) return;
-
-        // Cooldown — extended when gas is low to preserve runway
-        if (Date.now() - this._lastSwapTime < BASE_COOLDOWN_MS * cycleCooldownMultiplier) return;
-
-        await this._addLiquidity(account, fcToAdd, ethToAdd);
-        this._lastSwapTime = Date.now();
-
-        this._state.totalEthReinvested += ethToAdd;
-        this._state.profitLog.push({
-          time: Date.now(), ethProfit: 0, ethReinvested: ethToAdd,
-          reason: `Growth: +${fcToAdd} FC + ${ethToAdd.toFixed(6)} ETH`, tier: tier.name, poolUsd,
-        });
-        this._trimLogs();
-        this._save();
-        this._notify('cycle');
-        return;
-      }
+      // ─── ALL TIERS: Only gas-positive trades ─────────────
+      // The Director NEVER spends the user's ETH. Every trade must
+      // put more ETH into the wallet than the gas it costs.
+      // Growth mode used to drain ETH by adding liquidity — that's gone.
+      // Now ALL tiers do the same thing: sell FC → ETH (gas-positive).
+      // The only difference between tiers is the profit/reinvest split.
 
       // ─── NORMAL/SCALING/TRUST MODE: Sell FC → ETH ────────
       const sizing = this._calcSwapAmount(reserveFC, reserveETH, walletFC, ethUsd);
@@ -415,15 +389,17 @@ class FCDirectorAI {
           this._state.reinvestCount++;
 
           if (reinvestETH > 0.0000001) {
-            // Re-read wallet ETH — never dip into gas runway
+            // Only reinvest from EARNED ETH, never the user's original ETH.
+            // Re-read wallet to confirm we have enough above gas reserve.
             const freshETH = await getETHBalance(account);
-            const safeReinvest = Math.min(reinvestETH, Math.max(freshETH - GAS_RESERVE_ETH * 1.5, 0) * 0.4);
-            if (safeReinvest > 0.0000001) {
+            // Must keep gas reserve + extra buffer. Only reinvest earned ETH.
+            const earnedAvailable = Math.min(reinvestETH, Math.max(freshETH - GAS_RESERVE_ETH * 2, 0));
+            if (earnedAvailable > 0.0000001) {
               const ratio = reserveFC / reserveETH;
-              const fcForReinvest = Math.min(safeReinvest * ratio, walletFC * 0.25);  // Fractional
+              const fcForReinvest = Math.min(earnedAvailable * ratio, walletFC * 0.25);
               if (fcForReinvest >= 0.001) {
-                await this._addLiquidity(account, fcForReinvest, safeReinvest);
-                this._state.totalEthReinvested += safeReinvest;
+                await this._addLiquidity(account, fcForReinvest, earnedAvailable);
+                this._state.totalEthReinvested += earnedAvailable;
               }
             }
           }
