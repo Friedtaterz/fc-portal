@@ -54,20 +54,16 @@ function PoolCard({ pool, isMember, wallet, isCreator, myMetrics, onRefresh }) {
       if (depositType === 'eth') {
         tx = await depositETH(pool.id, amt);
       } else {
-        // FNC or FC — try deposit, auto-approve if needed
+        // FNC — approve first if needed, then deposit
+        setResult({ ok: true, msg: 'Approving FNC for pool contract... confirm in wallet' });
         try {
-          tx = await depositFNC(pool.id, amt);
-        } catch (depositErr) {
-          const dMsg = depositErr.message || '';
-          if (dMsg.includes('allowance') || dMsg.includes('exceeds') || dMsg.includes('insufficient')) {
-            setResult({ ok: true, msg: 'Approving token first... confirm in wallet' });
-            await approveFNC();
-            setResult({ ok: true, msg: 'Approved! Now depositing... confirm again' });
-            tx = await depositFNC(pool.id, amt);
-          } else {
-            throw depositErr;
-          }
+          await approveFNC();
+        } catch (approveErr) {
+          if (approveErr.message?.includes('4001') || approveErr.message?.includes('rejected')) throw approveErr;
+          // Already approved or approval not needed, continue
         }
+        setResult({ ok: true, msg: 'Depositing FNC... confirm in wallet' });
+        tx = await depositFNC(pool.id, amt);
       }
       setResult({ ok: true, msg: `Deposited! TX: ${tx.slice(0, 10)}...` });
       setDepositAmt('');
@@ -195,7 +191,6 @@ function PoolCard({ pool, isMember, wallet, isCreator, myMetrics, onRefresh }) {
             <div className="pool-deposit-toggle" style={{ marginBottom: 8 }}>
               <button onClick={() => setDepositType('eth')} className={'btn btn-sm ' + (depositType === 'eth' ? 'btn-primary' : 'btn-outline')}>ETH</button>
               <button onClick={() => setDepositType('fnc')} className={'btn btn-sm ' + (depositType === 'fnc' ? 'btn-primary' : 'btn-outline')}>FNC</button>
-              <button onClick={() => setDepositType('fc')} className={'btn btn-sm ' + (depositType === 'fc' ? 'btn-primary' : 'btn-outline')}>FC</button>
             </div>
             <div className="pool-join-row">
               <input type="number" step={depositType === 'eth' ? '0.001' : '1'} min="0" placeholder={`${depositType.toUpperCase()} amount`} value={depositAmt} onChange={e => setDepositAmt(e.target.value)} className="pool-input" />
