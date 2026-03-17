@@ -40,18 +40,17 @@ const MAX_DRAIN_PCT = 0.02;            // Never drain >2% of pool per swap
 const SCALE_RAMP_FACTOR = 0.5;         // Use 50% of max-drain budget (conservative)
 
 // ─── GAS STRATEGY ────────────────────────────────────────────────
-// The Director NEVER runs the wallet dry. It thinks ahead.
-//
-// MIN_GAS_RUNWAY: Always keep enough for at least this many future
-// transactions. If we can't afford the runway, we slow down or stop.
-// This protects users who trust the Director with real money.
-const MIN_GAS_RUNWAY_TXS = 50;        // Always keep gas for 50 more transactions
-const GAS_RESERVE_ETH = GAS_COST_ETH * MIN_GAS_RUNWAY_TXS; // ~0.00075 ETH
-const GAS_WARNING_TXS = 100;          // Start warning at 100 txs remaining
-const GAS_SLOWDOWN_TXS = 75;          // Start slowing down at 75 txs remaining
-// At 50 txs remaining: full stop. Never touch the last 50 txs of gas.
-// At 75 txs: double cooldown (trade half as often)
-// At 100 txs: show warning in UI but keep trading normally
+// Every trade is gas-positive (earns more ETH than gas costs).
+// So gas is SELF-SUSTAINING — the Director refuels on every trade.
+// We only need enough runway for a few trades to get rolling.
+// After that, each trade adds to the runway automatically.
+const MIN_GAS_RUNWAY_TXS = 5;         // Just need enough to start — trades refuel
+const GAS_RESERVE_ETH = GAS_COST_ETH * MIN_GAS_RUNWAY_TXS; // ~0.000075 ETH
+const GAS_WARNING_TXS = 20;           // Warning at 20 txs remaining
+const GAS_SLOWDOWN_TXS = 10;          // Slow down at 10 txs remaining
+// The Director EARNS ETH on every trade. With 0.00007 ETH profit
+// per micro-trade, 5 trades = 0.00035 ETH earned = 23 more txs of gas.
+// It builds its own runway. That's the whole point.
 
 // Swap size ramp — grows with pool depth
 const MIN_SWAP_FC = 0.001;             // Fractional trades — most crypto is fractions
