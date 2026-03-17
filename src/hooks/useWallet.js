@@ -1,16 +1,27 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { CoinbaseWalletSDK } from '@coinbase/wallet-sdk';
 import { BASE_CHAIN_ID, BASE_CHAIN_HEX, BASE_RPC } from '../config';
 
-// Detect any EVM wallet provider
-function getProvider() {
+// Detect any already-injected EVM wallet provider (extensions, in-app browsers)
+function getInjectedProvider() {
   if (typeof window === 'undefined') return null;
   if (window.ethereum?.providers?.length) return window.ethereum.providers[0];
   return window.ethereum || window.coinbaseWalletExtension || window.trustwallet || null;
 }
 
-// Detect mobile
-function isMobile() {
-  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+// Create Coinbase Wallet SDK provider — works in ANY browser, no app needed.
+// User signs in with email/passkey, gets a smart wallet on Base.
+let _cbProvider = null;
+function getCoinbaseProvider() {
+  if (_cbProvider) return _cbProvider;
+  const sdk = new CoinbaseWalletSDK({
+    appName: 'FractalCoin',
+    appChainIds: [BASE_CHAIN_ID],
+  });
+  _cbProvider = sdk.makeWeb3Provider({
+    options: 'smartWalletOnly',
+  });
+  return _cbProvider;
 }
 
 export function useWallet() {
@@ -18,27 +29,27 @@ export function useWallet() {
   const [chainId, setChainId] = useState(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState(null);
-  const [showWalletModal, setShowWalletModal] = useState(false);
 
   const isBase = chainId === BASE_CHAIN_ID;
-  const [hasWallet, setHasWallet] = useState(!!getProvider());
+  const providerRef = useRef(null);
+  const [hasWallet, setHasWallet] = useState(!!getInjectedProvider());
 
   // Detect late-injected wallets
   useEffect(() => {
     if (hasWallet) return;
-    if (getProvider()) { setHasWallet(true); return; }
-    const onInjected = () => { if (getProvider()) setHasWallet(true); };
+    if (getInjectedProvider()) { setHasWallet(true); return; }
+    const onInjected = () => { if (getInjectedProvider()) setHasWallet(true); };
     window.addEventListener('ethereum#initialized', onInjected);
     window.addEventListener('eip6963:announceProvider', onInjected);
     try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch {}
-    const check = setInterval(() => { if (getProvider()) { setHasWallet(true); clearInterval(check); } }, 200);
+    const check = setInterval(() => { if (getInjectedProvider()) { setHasWallet(true); clearInterval(check); } }, 200);
     const stop = setTimeout(() => clearInterval(check), 5000);
     return () => { window.removeEventListener('ethereum#initialized', onInjected); window.removeEventListener('eip6963:announceProvider', onInjected); clearInterval(check); clearTimeout(stop); };
   }, [hasWallet]);
 
-  // Listen for account/chain changes
+  // Listen for account/chain changes on whatever provider we're using
   useEffect(() => {
-    const eth = getProvider();
+    const eth = providerRef.current || getInjectedProvider();
     if (!eth) return;
 
     const onAccounts = (accs) => setAccount(accs[0] || null);
@@ -54,29 +65,24 @@ export function useWallet() {
       eth.removeListener('accountsChanged', onAccounts);
       eth.removeListener('chainChanged', onChain);
     };
-  }, [hasWallet]);
+  }, [hasWallet, account]);
 
   const connect = useCallback(async () => {
-    let eth = getProvider();
-
-    // On mobile, wait a beat for late-injecting wallets (Coinbase Wallet, Trust, etc.)
-    if (!eth && isMobile()) {
-      await new Promise(r => setTimeout(r, 500));
-      eth = getProvider();
-    }
-
-    if (!eth) {
-      // No wallet found — show friendly modal with wallet options
-      setShowWalletModal(true);
-      return;
-    }
-
-    if (!hasWallet) setHasWallet(true);
     setConnecting(true);
     setError(null);
+
     try {
+      // Use injected provider if available (MetaMask extension, in-app wallet browser, etc.)
+      // Otherwise fall back to Coinbase Wallet SDK — works in any browser, no app download needed
+      let eth = getInjectedProvider();
+      if (!eth) {
+        eth = getCoinbaseProvider();
+      }
+      providerRef.current = eth;
+
       const accounts = await eth.request({ method: 'eth_requestAccounts' });
       setAccount(accounts[0] || null);
+      if (!hasWallet) setHasWallet(true);
 
       const chain = await eth.request({ method: 'eth_chainId' });
       const chainNum = parseInt(chain, 16);
@@ -115,7 +121,7 @@ export function useWallet() {
   }, [hasWallet]);
 
   const switchToBase = useCallback(async () => {
-    const eth = getProvider();
+    const eth = providerRef.current || getInjectedProvider();
     if (!eth) return;
     try {
       await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: BASE_CHAIN_HEX }] });
@@ -127,13 +133,14 @@ export function useWallet() {
         });
       }
     }
-  }, [hasWallet]);
+  }, []);
 
-  const disconnect = useCallback(() => { setAccount(null); }, []);
+  const disconnect = useCallback(() => {
+    setAccount(null);
+    providerRef.current = null;
+  }, []);
 
   const shortAddress = account ? account.slice(0, 6) + '...' + account.slice(-4) : null;
 
-  const closeWalletModal = useCallback(() => setShowWalletModal(false), []);
-
-  return { account, shortAddress, chainId, isBase, connecting, error, hasMetaMask: hasWallet, connect, switchToBase, disconnect, showWalletModal, closeWalletModal, isMobile: isMobile() };
+  return { account, shortAddress, chainId, isBase, connecting, error, hasMetaMask: hasWallet, connect, switchToBase, disconnect };
 }

@@ -1,7 +1,6 @@
 import React from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import Header from './components/Header';
-import WalletModal from './components/WalletModal';
 import Dashboard from './pages/Dashboard';
 import Pool from './pages/Pool';
 import Trade from './pages/Trade';
@@ -17,7 +16,6 @@ export default function App() {
     <HashRouter>
       <div className="app">
         <Header wallet={wallet} />
-        <WalletModal open={wallet.showWalletModal} onClose={wallet.closeWalletModal} isMobile={wallet.isMobile} />
         <main className="main">
           <Routes>
             <Route path="/" element={<Dashboard chain={chain} wallet={wallet} />} />
