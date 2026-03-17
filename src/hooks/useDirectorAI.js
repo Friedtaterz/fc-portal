@@ -66,7 +66,7 @@ const TIERS = [
   { name: 'Trust Mode',     maxUsd: Infinity,     profitRatio: 0.80, reinvestRatio: 0.20 },
 ];
 
-const REINVEST_THRESHOLD_USD = 10;     // Check profit split every $10 earned
+const REINVEST_THRESHOLD_USD = 0.10;   // Check profit split every $0.10 earned — show gains immediately
 
 // Selectors
 const SEL = {
