@@ -18,6 +18,7 @@ export function useWallet() {
   const [chainId, setChainId] = useState(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState(null);
+  const [showWalletModal, setShowWalletModal] = useState(false);
 
   const isBase = chainId === BASE_CHAIN_ID;
   const [hasWallet, setHasWallet] = useState(!!getProvider());
@@ -65,26 +66,8 @@ export function useWallet() {
     }
 
     if (!eth) {
-      // No wallet found — show options, don't just redirect to Play Store
-      if (isMobile()) {
-        // Give user a choice instead of auto-redirecting
-        const choice = confirm(
-          'No crypto wallet detected.\n\n' +
-          'OK = Open this page inside MetaMask app\n' +
-          'Cancel = Continue without wallet\n\n' +
-          'If you already have MetaMask installed, open it and use its built-in browser to visit this site.'
-        );
-        if (choice) {
-          const dappUrl = window.location.href.replace(/^https?:\/\//, '');
-          window.location.href = `https://metamask.app.link/dapp/${dappUrl}`;
-        } else {
-          setError('No wallet detected. Install MetaMask, Coinbase Wallet, or Trust Wallet, then open this site from inside the wallet app.');
-        }
-        return;
-      }
-      // Desktop without extension
-      setError('No wallet extension found. Install MetaMask (metamask.io) or Coinbase Wallet, then refresh.');
-      window.open('https://metamask.io/download/', '_blank');
+      // No wallet found — show friendly modal with wallet options
+      setShowWalletModal(true);
       return;
     }
 
@@ -150,5 +133,7 @@ export function useWallet() {
 
   const shortAddress = account ? account.slice(0, 6) + '...' + account.slice(-4) : null;
 
-  return { account, shortAddress, chainId, isBase, connecting, error, hasMetaMask: hasWallet, connect, switchToBase, disconnect };
+  const closeWalletModal = useCallback(() => setShowWalletModal(false), []);
+
+  return { account, shortAddress, chainId, isBase, connecting, error, hasMetaMask: hasWallet, connect, switchToBase, disconnect, showWalletModal, closeWalletModal, isMobile: isMobile() };
 }

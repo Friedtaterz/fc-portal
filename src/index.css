@@ -1204,6 +1204,168 @@ a:hover { text-decoration: underline; }
   .logo-text { display: none; }
 }
 
+/* ─── Wallet Modal ─────────────────────────────────────── */
+
+.wallet-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.wallet-modal {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 28px;
+  max-width: 420px;
+  width: 100%;
+  position: relative;
+  animation: modalIn 0.2s ease-out;
+}
+
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.95) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.wallet-modal-close {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  line-height: 1;
+}
+.wallet-modal-close:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+
+.wallet-modal-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.wallet-modal-subtitle {
+  font-size: 14px;
+  color: var(--text-dim);
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+.wallet-modal-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wallet-modal-option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+  color: var(--text);
+  width: 100%;
+}
+.wallet-modal-option:hover {
+  border-color: var(--accent);
+  background: rgba(0,255,204,0.04);
+  transform: translateY(-1px);
+}
+
+.wallet-modal-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 18px;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.wallet-modal-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wallet-modal-name {
+  font-weight: 600;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wallet-modal-tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: rgba(0,255,204,0.15);
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.wallet-modal-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.wallet-modal-arrow {
+  font-size: 22px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.wallet-modal-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(255,255,255,0.02);
+  border-radius: 8px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.wallet-modal-skip {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: center;
+  border-radius: 8px;
+}
+.wallet-modal-skip:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+
 /* ═══════════════════════════════════════════════════════════
    Trading Pipeline Dashboard
    ═══════════════════════════════════════════════════════════ */
