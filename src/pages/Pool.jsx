@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import StatCard from '../components/StatCard';
 import ProgressBar from '../components/ProgressBar';
 import { BASESCAN_POOLS, BASESCAN_TOKEN } from '../config';
-import { usePoolData, joinPoolETH, createPool, claimRewards, depositETH } from '../hooks/usePoolData';
+import { usePoolData, joinPoolETH, createPool, claimRewards, depositETH, depositFNC, approveFNC } from '../hooks/usePoolData';
 
 const fmt = (n, d = 2) => n?.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }) || '0';
 
@@ -23,6 +23,7 @@ function PoolCard({ pool, isMember, wallet, isCreator, myMetrics, onRefresh }) {
   const [claiming, setClaiming] = useState(false);
   const [depositing, setDepositing] = useState(false);
   const [depositAmt, setDepositAmt] = useState('');
+  const [depositType, setDepositType] = useState('eth');
   const [result, setResult] = useState(null);
   const isHance = pool.id === 0;
   const m = myMetrics;
@@ -45,11 +46,29 @@ function PoolCard({ pool, isMember, wallet, isCreator, myMetrics, onRefresh }) {
   };
 
   const handleDeposit = async () => {
-    const eth = parseFloat(depositAmt);
-    if (!eth || eth <= 0) { setResult({ ok: false, msg: 'Enter an ETH amount' }); return; }
+    const amt = parseFloat(depositAmt);
+    if (!amt || amt <= 0) { setResult({ ok: false, msg: `Enter a ${depositType.toUpperCase()} amount` }); return; }
     setDepositing(true); setResult(null);
     try {
-      const tx = await depositETH(pool.id, eth);
+      let tx;
+      if (depositType === 'eth') {
+        tx = await depositETH(pool.id, amt);
+      } else {
+        // FNC or FC — try deposit, auto-approve if needed
+        try {
+          tx = await depositFNC(pool.id, amt);
+        } catch (depositErr) {
+          const dMsg = depositErr.message || '';
+          if (dMsg.includes('allowance') || dMsg.includes('exceeds') || dMsg.includes('insufficient')) {
+            setResult({ ok: true, msg: 'Approving token first... confirm in wallet' });
+            await approveFNC();
+            setResult({ ok: true, msg: 'Approved! Now depositing... confirm again' });
+            tx = await depositFNC(pool.id, amt);
+          } else {
+            throw depositErr;
+          }
+        }
+      }
       setResult({ ok: true, msg: `Deposited! TX: ${tx.slice(0, 10)}...` });
       setDepositAmt('');
       setTimeout(() => onRefresh?.(), 5000);
@@ -173,10 +192,16 @@ function PoolCard({ pool, isMember, wallet, isCreator, myMetrics, onRefresh }) {
 
           {/* Deposit more */}
           <div className="pool-deposit-section">
+            <div className="pool-deposit-toggle" style={{ marginBottom: 8 }}>
+              <button onClick={() => setDepositType('eth')} className={'btn btn-sm ' + (depositType === 'eth' ? 'btn-primary' : 'btn-outline')}>ETH</button>
+              <button onClick={() => setDepositType('fnc')} className={'btn btn-sm ' + (depositType === 'fnc' ? 'btn-primary' : 'btn-outline')}>FNC</button>
+              <button onClick={() => setDepositType('fc')} className={'btn btn-sm ' + (depositType === 'fc' ? 'btn-primary' : 'btn-outline')}>FC</button>
+            </div>
             <div className="pool-join-row">
-              <input type="number" step="0.001" min="0" placeholder="Add more ETH" value={depositAmt} onChange={e => setDepositAmt(e.target.value)} className="pool-input" />
+              <input type="number" step={depositType === 'eth' ? '0.001' : '1'} min="0" placeholder={`${depositType.toUpperCase()} amount`} value={depositAmt} onChange={e => setDepositAmt(e.target.value)} className="pool-input" />
               <button onClick={handleDeposit} disabled={depositing} className="btn btn-primary btn-sm">{depositing ? 'Depositing...' : 'Deposit'}</button>
             </div>
+            <div className="pool-join-note">5% ecosystem fee. Grows your pool share.</div>
           </div>
         </div>
       )}
