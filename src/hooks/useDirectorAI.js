@@ -57,10 +57,12 @@ const GAS_SLOWDOWN_TXS = 75;          // Start slowing down at 75 txs remaining
 const MIN_SWAP_FC = 0.001;             // Fractional trades — most crypto is fractions
 const MAX_SWAP_FC = 5000;              // Ceiling: 5000 FC per swap
 
-// Tier thresholds (matches config.js TIERS)
+// Tier thresholds — profit splits for FC → ETH earnings
+// RULE: Director never spends user's ETH. Reinvest only uses earned ETH.
+// Even Pool Building tier keeps 100% profit now — reinvest is manual (user adds liquidity).
 const TIERS = [
-  { name: 'Pool Building',  maxUsd: 1_000,       profitRatio: 0,    reinvestRatio: 1.0  },
-  { name: 'Direct Payout',  maxUsd: 100_000,     profitRatio: 0.30, reinvestRatio: 0.70 },
+  { name: 'Pool Building',  maxUsd: 1_000,       profitRatio: 1.0,  reinvestRatio: 0    },
+  { name: 'Direct Payout',  maxUsd: 100_000,     profitRatio: 0.70, reinvestRatio: 0.30 },
   { name: 'Scaling',        maxUsd: 10_000_000,  profitRatio: 0.50, reinvestRatio: 0.50 },
   { name: 'Trust Mode',     maxUsd: Infinity,     profitRatio: 0.80, reinvestRatio: 0.20 },
 ];

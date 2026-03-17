@@ -70,7 +70,7 @@ function DirectorPanel({ chain }) {
         <div style={{ color: currentTier.color, fontWeight: 700, fontSize: 14 }}>{currentTier.icon} {currentTier.name}</div>
         <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>
           Pool: ${fmt(poolUsd)} | Profit: {currentTier.profit}% | Reinvest: {currentTier.reinvest}%
-          {currentTier.profit === 0 && ' | Adding liquidity directly (no selling)'}
+          {currentTier.reinvest === 0 && ' | All earnings kept as profit'}
         </div>
       </div>
 
@@ -92,9 +92,16 @@ function DirectorPanel({ chain }) {
         </div>
       )}
 
+      {/* Gas Runway */}
+      {status.gasWarning && (
+        <div style={{ background: '#1a1a0a', border: '1px solid #f59e0b', borderRadius: 8, padding: 10, marginTop: 12, color: '#f59e0b', fontSize: 12 }}>
+          {status.gasWarning}
+        </div>
+      )}
+
       {/* Safety Config */}
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 12, fontSize: 12, color: '#666' }}>
-        <span>Gas reserve: {status.gasReserve} ETH</span>
+        <span>Gas runway: ~{status.gasRunwayTxs || '?'} txs</span>
         <span>Max drain: {status.maxDrainPct}%/trade</span>
         <span>Max impact: {status.maxImpactPct}%</span>
         <span>Reinvested: {fmt(status.totalEthReinvested, 6)} ETH</span>

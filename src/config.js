@@ -32,9 +32,11 @@ export const UNISWAP_BUY_URL = `https://app.uniswap.org/swap?outputCurrency=${FC
 export const UNISWAP_SELL_URL = `https://app.uniswap.org/swap?inputCurrency=${FC_TOKEN}&chain=base`;
 
 // Tier thresholds (matches FCDirectorAI)
+// Pool Building: keep all earnings (user adds liquidity manually)
+// Higher tiers: auto-reinvest a portion of EARNED ETH back to pool
 export const TIERS = [
-  { name: 'Pool Building',  max: 1_000,       profit: 0,   reinvest: 100, color: '#3b82f6', icon: '🌱' },
-  { name: 'Direct Payout',  max: 100_000,     profit: 30,  reinvest: 70,  color: '#10b981', icon: '📈' },
+  { name: 'Pool Building',  max: 1_000,       profit: 100, reinvest: 0,   color: '#3b82f6', icon: '🌱' },
+  { name: 'Direct Payout',  max: 100_000,     profit: 70,  reinvest: 30,  color: '#10b981', icon: '📈' },
   { name: 'Scaling',        max: 10_000_000,  profit: 50,  reinvest: 50,  color: '#f59e0b', icon: '🚀' },
   { name: 'Trust Mode',     max: Infinity,    profit: 80,  reinvest: 20,  color: '#8b5cf6', icon: '👑' },
 ];
