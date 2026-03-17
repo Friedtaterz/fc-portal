@@ -1,6 +1,6 @@
 // ─── FractalCoin Contract Addresses (Base Mainnet) ───────────────
 export const FC_TOKEN    = '0x4ef6025daa23496831e9b2ef419f6541d2dbd013';
-export const FC_POOLS    = '0x3420FDa720a98297Bc2f3F503433F76EbE6517d6'; // V3 — invite-only + deposit more
+export const FC_POOLS    = '0x7987ccb8080de4111f745fdb0b8358e82ca88b94'; // V4 — open pools, no invite gate
 export const FNC_TOKEN   = '0x8bb92439c1074F42DB3F71ad8A48CAe07b8D2ecE';
 export const WETH        = '0x4200000000000000000000000000000000000006';
 export const UNISWAP_ROUTER = '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24';
