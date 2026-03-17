@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import Pool from './pages/Pool';
 import Trade from './pages/Trade';
 import HowItWorks from './pages/HowItWorks';
+import Deploy from './pages/Deploy';
 import { useWallet } from './hooks/useWallet';
 import { useChainData } from './hooks/useChainData';
 
@@ -24,6 +25,7 @@ export default function App() {
             <Route path="/pool" element={<Pool chain={chain} wallet={wallet} />} />
             <Route path="/trade" element={<Trade chain={chain} wallet={wallet} />} />
             <Route path="/how" element={<HowItWorks />} />
+            <Route path="/deploy" element={<Deploy wallet={wallet} />} />
           </Routes>
         </main>
         <footer className="footer">
