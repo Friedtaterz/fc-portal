@@ -1,94 +1,78 @@
 import React from 'react';
 
-const DAPP_URL = typeof window !== 'undefined'
-  ? window.location.href.replace(/^https?:\/\//, '')
-  : '';
-
-const WALLETS = [
-  {
-    name: 'Coinbase Wallet',
-    desc: 'Create a wallet with just your email — easiest for beginners',
-    color: '#0052FF',
-    mobileLink: `https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(window?.location?.href || '')}`,
-    desktopLink: 'https://www.coinbase.com/wallet',
-    tag: 'Recommended',
-  },
-  {
-    name: 'MetaMask',
-    desc: 'Most popular crypto wallet',
-    color: '#E2761B',
-    mobileLink: `https://metamask.app.link/dapp/${DAPP_URL}`,
-    desktopLink: 'https://metamask.io/download/',
-    tag: null,
-  },
-  {
-    name: 'Trust Wallet',
-    desc: 'Simple and secure mobile wallet',
-    color: '#3375BB',
-    mobileLink: `https://link.trustwallet.com/open_url?coin_id=8453&url=${encodeURIComponent(window?.location?.href || '')}`,
-    desktopLink: 'https://trustwallet.com/download',
-    tag: null,
-  },
-];
-
-export default function WalletModal({ open, onClose, isMobile }) {
-  if (!open) return null;
-
-  const handlePick = (wallet) => {
-    const link = isMobile ? wallet.mobileLink : wallet.desktopLink;
-    if (isMobile) {
-      // On mobile, open wallet's in-app browser with our dapp loaded
-      window.location.href = link;
-    } else {
-      window.open(link, '_blank');
-    }
-  };
+export default function WalletModal({ wallet }) {
+  if (!wallet.showWalletModal) return null;
 
   return (
-    <div className="wallet-modal-overlay" onClick={onClose}>
+    <div className="wallet-modal-overlay" onClick={wallet.closeWalletModal}>
       <div className="wallet-modal" onClick={e => e.stopPropagation()}>
-        <button className="wallet-modal-close" onClick={onClose}>x</button>
+        <button className="wallet-modal-close" onClick={wallet.closeWalletModal}>x</button>
 
-        <h2 className="wallet-modal-title">
-          {isMobile ? 'Open with a Wallet App' : 'Get a Wallet'}
-        </h2>
+        <h2 className="wallet-modal-title">Connect Your Wallet</h2>
         <p className="wallet-modal-subtitle">
-          {isMobile
-            ? "Pick a wallet app below. If you already have one installed, it'll open automatically. If not, you'll be taken to install it."
-            : "Install a browser wallet extension to connect. If you're new to crypto, Coinbase Wallet is the easiest way to start."
-          }
+          Choose how you want to connect. If you don't have a wallet yet, Coinbase will help you create one.
         </p>
 
         <div className="wallet-modal-options">
-          {WALLETS.map(w => (
-            <button
-              key={w.name}
-              className="wallet-modal-option"
-              onClick={() => handlePick(w)}
-            >
-              <div className="wallet-modal-icon" style={{ background: w.color }}>
-                {w.name[0]}
-              </div>
+          {/* Coinbase — works in browser, handles both existing users and new wallet creation */}
+          <button className="wallet-modal-option" onClick={wallet.connectCoinbase} disabled={wallet.connecting}>
+            <div className="wallet-modal-icon" style={{ background: '#0052FF' }}>C</div>
+            <div className="wallet-modal-info">
+              <span className="wallet-modal-name">
+                Coinbase Wallet
+                <span className="wallet-modal-tag">Recommended</span>
+              </span>
+              <span className="wallet-modal-desc">
+                Connect existing wallet or create a new one — no app needed
+              </span>
+            </div>
+            <span className="wallet-modal-arrow">&rsaquo;</span>
+          </button>
+
+          {/* MetaMask — only on mobile, opens page in MetaMask's browser */}
+          {wallet.isMobile && (
+            <button className="wallet-modal-option" onClick={wallet.openInMetaMask}>
+              <div className="wallet-modal-icon" style={{ background: '#E2761B' }}>M</div>
               <div className="wallet-modal-info">
-                <span className="wallet-modal-name">
-                  {w.name}
-                  {w.tag && <span className="wallet-modal-tag">{w.tag}</span>}
+                <span className="wallet-modal-name">MetaMask</span>
+                <span className="wallet-modal-desc">
+                  Opens this page inside the MetaMask app
                 </span>
-                <span className="wallet-modal-desc">{w.desc}</span>
               </div>
               <span className="wallet-modal-arrow">&rsaquo;</span>
             </button>
-          ))}
+          )}
+
+          {/* Desktop without extension — link to install */}
+          {!wallet.isMobile && (
+            <a
+              className="wallet-modal-option"
+              href="https://metamask.io/download/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <div className="wallet-modal-icon" style={{ background: '#E2761B' }}>M</div>
+              <div className="wallet-modal-info">
+                <span className="wallet-modal-name">MetaMask</span>
+                <span className="wallet-modal-desc">
+                  Install the browser extension, then refresh
+                </span>
+              </div>
+              <span className="wallet-modal-arrow">&rsaquo;</span>
+            </a>
+          )}
         </div>
 
-        {isMobile && (
-          <p className="wallet-modal-hint">
-            Already have a wallet? Open its app, find the built-in browser, and paste this site's URL.
-          </p>
+        {wallet.error && (
+          <div className="wallet-modal-error">{wallet.error}</div>
         )}
 
-        <button className="wallet-modal-skip" onClick={onClose}>
-          Continue without wallet
+        {wallet.connecting && (
+          <div className="wallet-modal-loading">Connecting...</div>
+        )}
+
+        <button className="wallet-modal-skip" onClick={wallet.closeWalletModal}>
+          Cancel
         </button>
       </div>
     </div>

@@ -9,8 +9,11 @@ function getInjectedProvider() {
   return window.ethereum || window.coinbaseWalletExtension || window.trustwallet || null;
 }
 
-// Create Coinbase Wallet SDK provider — works in ANY browser, no app needed.
-// User signs in with email/passkey, gets a smart wallet on Base.
+function isMobile() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+// Coinbase Wallet SDK — 'all' mode lets users connect existing CB Wallet OR create new one
 let _cbProvider = null;
 function getCoinbaseProvider() {
   if (_cbProvider) return _cbProvider;
@@ -19,7 +22,7 @@ function getCoinbaseProvider() {
     appChainIds: [BASE_CHAIN_ID],
   });
   _cbProvider = sdk.makeWeb3Provider({
-    options: 'smartWalletOnly',
+    options: 'all',
   });
   return _cbProvider;
 }
@@ -29,6 +32,7 @@ export function useWallet() {
   const [chainId, setChainId] = useState(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState(null);
+  const [showWalletModal, setShowWalletModal] = useState(false);
 
   const isBase = chainId === BASE_CHAIN_ID;
   const providerRef = useRef(null);
@@ -47,7 +51,7 @@ export function useWallet() {
     return () => { window.removeEventListener('ethereum#initialized', onInjected); window.removeEventListener('eip6963:announceProvider', onInjected); clearInterval(check); clearTimeout(stop); };
   }, [hasWallet]);
 
-  // Listen for account/chain changes on whatever provider we're using
+  // Listen for account/chain changes
   useEffect(() => {
     const eth = providerRef.current || getInjectedProvider();
     if (!eth) return;
@@ -67,22 +71,17 @@ export function useWallet() {
     };
   }, [hasWallet, account]);
 
-  const connect = useCallback(async () => {
+  // Shared logic: once we have a provider, request accounts and switch to Base
+  const finishConnect = useCallback(async (eth) => {
+    providerRef.current = eth;
     setConnecting(true);
     setError(null);
 
     try {
-      // Use injected provider if available (MetaMask extension, in-app wallet browser, etc.)
-      // Otherwise fall back to Coinbase Wallet SDK — works in any browser, no app download needed
-      let eth = getInjectedProvider();
-      if (!eth) {
-        eth = getCoinbaseProvider();
-      }
-      providerRef.current = eth;
-
       const accounts = await eth.request({ method: 'eth_requestAccounts' });
       setAccount(accounts[0] || null);
       if (!hasWallet) setHasWallet(true);
+      setShowWalletModal(false);
 
       const chain = await eth.request({ method: 'eth_chainId' });
       const chainNum = parseInt(chain, 16);
@@ -101,8 +100,6 @@ export function useWallet() {
         }
       }
 
-      setConnecting(false);
-
       // Auto-add FC token (fire-and-forget, only once)
       try {
         if (!localStorage.getItem('fc_token_added')) {
@@ -112,13 +109,43 @@ export function useWallet() {
           }).then(() => { try { localStorage.setItem('fc_token_added', '1'); } catch {} }).catch(() => {});
         }
       } catch {}
-      return;
     } catch (err) {
       if (err.code === 4001) setError('Connection rejected');
       else setError(err.message);
     }
     setConnecting(false);
   }, [hasWallet]);
+
+  // Main connect — tries injected provider first, shows modal if none found
+  const connect = useCallback(async () => {
+    let eth = getInjectedProvider();
+
+    // On mobile, wait a beat for late-injecting wallets
+    if (!eth && isMobile()) {
+      await new Promise(r => setTimeout(r, 500));
+      eth = getInjectedProvider();
+    }
+
+    if (eth) {
+      // Has a wallet extension or we're inside a wallet's in-app browser — connect directly
+      await finishConnect(eth);
+    } else {
+      // No wallet detected — show the picker modal
+      setShowWalletModal(true);
+    }
+  }, [finishConnect]);
+
+  // Connect via Coinbase Wallet SDK (called from modal)
+  const connectCoinbase = useCallback(async () => {
+    const eth = getCoinbaseProvider();
+    await finishConnect(eth);
+  }, [finishConnect]);
+
+  // Open page in MetaMask's in-app browser (called from modal on mobile)
+  const openInMetaMask = useCallback(() => {
+    const dappUrl = window.location.href.replace(/^https?:\/\//, '');
+    window.location.href = `https://metamask.app.link/dapp/${dappUrl}`;
+  }, []);
 
   const switchToBase = useCallback(async () => {
     const eth = providerRef.current || getInjectedProvider();
@@ -138,9 +165,17 @@ export function useWallet() {
   const disconnect = useCallback(() => {
     setAccount(null);
     providerRef.current = null;
+    _cbProvider = null;
   }, []);
+
+  const closeWalletModal = useCallback(() => setShowWalletModal(false), []);
 
   const shortAddress = account ? account.slice(0, 6) + '...' + account.slice(-4) : null;
 
-  return { account, shortAddress, chainId, isBase, connecting, error, hasMetaMask: hasWallet, connect, switchToBase, disconnect };
+  return {
+    account, shortAddress, chainId, isBase, connecting, error,
+    hasMetaMask: hasWallet, connect, switchToBase, disconnect,
+    showWalletModal, closeWalletModal, connectCoinbase, openInMetaMask,
+    isMobile: isMobile(),
+  };
 }

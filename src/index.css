@@ -1366,6 +1366,25 @@ a:hover { text-decoration: underline; }
 }
 .wallet-modal-skip:hover { color: var(--text); background: rgba(255,255,255,0.03); }
 
+.wallet-modal-error {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: rgba(239,68,68,0.1);
+  border: 1px solid rgba(239,68,68,0.2);
+  border-radius: 8px;
+  color: var(--red);
+  font-size: 13px;
+  text-align: center;
+}
+
+.wallet-modal-loading {
+  margin-top: 12px;
+  text-align: center;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+}
+
 /* ═══════════════════════════════════════════════════════════
    Trading Pipeline Dashboard
    ═══════════════════════════════════════════════════════════ */
