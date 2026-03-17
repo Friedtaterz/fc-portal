@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import StatCard from '../components/StatCard';
 import ProgressBar from '../components/ProgressBar';
 import { BASESCAN_POOLS, BASESCAN_TOKEN } from '../config';
-import { usePoolData, joinPoolETH, createPool, claimRewards, depositETH, depositFNC, approveFNC } from '../hooks/usePoolData';
+import { usePoolData, joinPoolETH, createPool, claimRewards, depositETH, depositFNC, approveFNC, distributeRewards } from '../hooks/usePoolData';
 
 const fmt = (n, d = 2) => n?.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }) || '0';
 
@@ -24,9 +24,30 @@ function PoolCard({ pool, isMember, wallet, isCreator, myMetrics, onRefresh }) {
   const [depositing, setDepositing] = useState(false);
   const [depositAmt, setDepositAmt] = useState('');
   const [depositType, setDepositType] = useState('eth');
+  const [rewardAmt, setRewardAmt] = useState('');
+  const [distributing, setDistributing] = useState(false);
   const [result, setResult] = useState(null);
   const isHance = pool.id === 0;
   const m = myMetrics;
+
+  const handleDistribute = async () => {
+    const amt = parseFloat(rewardAmt);
+    if (!amt || amt <= 0) { setResult({ ok: false, msg: 'Enter an FC amount' }); return; }
+    setDistributing(true); setResult(null);
+    try {
+      const tx = await distributeRewards(pool.id, amt);
+      setResult({ ok: true, msg: `Distributed ${amt} FC to pool! TX: ${tx.slice(0, 10)}...` });
+      setRewardAmt('');
+      setTimeout(() => onRefresh?.(), 5000);
+    } catch (err) {
+      const msg = err.message || '';
+      if (msg.includes('4001') || msg.includes('rejected')) setResult({ ok: false, msg: 'Rejected' });
+      else if (msg.includes('not owner')) setResult({ ok: false, msg: 'Only contract owner can distribute rewards' });
+      else if (msg.includes('founder cap')) setResult({ ok: false, msg: 'Founder mint cap reached' });
+      else setResult({ ok: false, msg: msg.slice(0, 100) });
+    }
+    setDistributing(false);
+  };
 
   const handleJoin = async () => {
     const eth = parseFloat(amount);
@@ -197,6 +218,18 @@ function PoolCard({ pool, isMember, wallet, isCreator, myMetrics, onRefresh }) {
               <button onClick={handleDeposit} disabled={depositing} className="btn btn-primary btn-sm">{depositing ? 'Depositing...' : 'Deposit'}</button>
             </div>
             <div className="pool-join-note">5% ecosystem fee. Grows your pool share.</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── OWNER: Fund Rewards ── */}
+      {isCreator && wallet.account && wallet.isBase && (
+        <div className="pool-metrics-section" style={{ borderColor: 'rgba(245,158,11,0.2)', background: 'rgba(245,158,11,0.04)' }}>
+          <h4 className="pool-metrics-title" style={{ color: '#f59e0b' }}>Fund Rewards (Owner)</h4>
+          <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>Mints FC into the pool contract so members can claim rewards.</p>
+          <div className="pool-join-row">
+            <input type="number" step="100" min="1" placeholder="FC amount to distribute" value={rewardAmt} onChange={e => setRewardAmt(e.target.value)} className="pool-input" />
+            <button onClick={handleDistribute} disabled={distributing} className="btn btn-primary btn-sm">{distributing ? 'Distributing...' : 'Fund Rewards'}</button>
           </div>
         </div>
       )}

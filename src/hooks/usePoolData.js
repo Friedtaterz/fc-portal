@@ -84,6 +84,7 @@ const SEL = {
   getUserPools:   '0x9816af58',
   getClaimable:   '0xb961cbe1',
   claimRewards:   '0x0962ef79',
+  distributeRewards: '0xdf6c39fb',
 };
 
 // ─── Read pool data ─────────────────────────────────────
@@ -354,6 +355,29 @@ export async function claimRewards(poolId) {
       to: FC_POOLS,
       data,
       gas: '0x' + (150000).toString(16),
+    }],
+  });
+  return txHash;
+}
+
+// ─── Distribute Rewards (owner only — mints FC into pool contract) ──
+export async function distributeRewards(poolId, fcAmount) {
+  if (!window.ethereum) throw new Error('No wallet');
+  const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+  if (!accounts[0]) throw new Error('Connect wallet first');
+
+  const amountWei = BigInt(Math.floor(fcAmount)) * BigInt('1000000000000000000');
+  const data = SEL.distributeRewards
+    + poolId.toString(16).padStart(64, '0')
+    + amountWei.toString(16).padStart(64, '0');
+
+  const txHash = await window.ethereum.request({
+    method: 'eth_sendTransaction',
+    params: [{
+      from: accounts[0],
+      to: FC_POOLS,
+      data,
+      gas: '0x' + (200000).toString(16),
     }],
   });
   return txHash;
