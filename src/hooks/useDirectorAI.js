@@ -30,10 +30,23 @@ const MAX_IMPACT_PCT = 8;              // Pause if slippage > 8%
 const MAX_SELL_RATIO = 0.40;           // Never sell more than 40% of wallet FC
 const MIN_POOL_ETH = 0.0000001;        // Allow micro-pools — don't block tiny liquidity
 const MIN_ETH_OUTPUT = 0.0000001;      // Accept dust output — keep trading
-const GAS_COST_ETH = 0.000005;         // Base L2 actual gas ~$0.001
-const GAS_RESERVE_ETH = 0.0002;        // ~$0.50 on Base — enough for 20+ txs
+const GAS_COST_ETH = 0.000015;         // Actual gas per tx on Base (~approve + swap)
 const MAX_DRAIN_PCT = 0.02;            // Never drain >2% of pool per swap
 const SCALE_RAMP_FACTOR = 0.5;         // Use 50% of max-drain budget (conservative)
+
+// ─── GAS STRATEGY ────────────────────────────────────────────────
+// The Director NEVER runs the wallet dry. It thinks ahead.
+//
+// MIN_GAS_RUNWAY: Always keep enough for at least this many future
+// transactions. If we can't afford the runway, we slow down or stop.
+// This protects users who trust the Director with real money.
+const MIN_GAS_RUNWAY_TXS = 50;        // Always keep gas for 50 more transactions
+const GAS_RESERVE_ETH = GAS_COST_ETH * MIN_GAS_RUNWAY_TXS; // ~0.00075 ETH
+const GAS_WARNING_TXS = 100;          // Start warning at 100 txs remaining
+const GAS_SLOWDOWN_TXS = 75;          // Start slowing down at 75 txs remaining
+// At 50 txs remaining: full stop. Never touch the last 50 txs of gas.
+// At 75 txs: double cooldown (trade half as often)
+// At 100 txs: show warning in UI but keep trading normally
 
 // Swap size ramp — grows with pool depth
 const MIN_SWAP_FC = 0.001;             // Fractional trades — most crypto is fractions
@@ -294,24 +307,43 @@ class FCDirectorAI {
       const poolUsd = reserveETH * ethUsd * 2;
       const tier = this._getTier(poolUsd);
 
-      // ─── Safety checks ───────────────────────────────────
+      // ─── GAS RUNWAY CHECK ─────────────────────────────────
+      // Think ahead: how many transactions can we still afford?
       if (reserveETH < MIN_POOL_ETH) {
         this._blocker = `Pool ETH too low (${reserveETH.toFixed(8)})`;
         return;
       }
 
-      if (walletETH < GAS_RESERVE_ETH) {
-        this._blocker = `Gas low: ${walletETH.toFixed(6)} ETH (need ${GAS_RESERVE_ETH}). Send ~$5 ETH on Base.`;
+      const gasRunwayTxs = Math.floor(walletETH / GAS_COST_ETH);
+      this._gasRunway = gasRunwayTxs;
+
+      if (gasRunwayTxs < MIN_GAS_RUNWAY_TXS) {
+        this._blocker = `Gas runway: ${gasRunwayTxs} txs left (minimum ${MIN_GAS_RUNWAY_TXS}). ` +
+          `Have ${walletETH.toFixed(6)} ETH, need ${GAS_RESERVE_ETH.toFixed(6)}. Send more ETH to keep trading.`;
         return;
+      }
+
+      if (gasRunwayTxs < GAS_WARNING_TXS) {
+        this._gasWarning = `Gas getting low: ~${gasRunwayTxs} transactions remaining. Consider adding ETH.`;
+      } else {
+        this._gasWarning = null;
       }
 
       this._blocker = null;
 
+      // If gas is getting low, slow down to extend runway
+      let cycleCooldownMultiplier = 1;
+      if (gasRunwayTxs < GAS_SLOWDOWN_TXS) {
+        // Between 50-75 txs: progressively double to quadruple the cooldown
+        cycleCooldownMultiplier = 1 + (GAS_SLOWDOWN_TXS - gasRunwayTxs) / (GAS_SLOWDOWN_TXS - MIN_GAS_RUNWAY_TXS) * 3;
+      }
+
       // ─── GROWTH MODE: Add liquidity directly ─────────────
       if (tier.profitRatio === 0) {
         // Don't sell FC → ETH (circular drain). Add wallet ETH + FC directly.
+        // IMPORTANT: Never dip into gas runway for liquidity adds
         const spendableETH = Math.max(walletETH - GAS_RESERVE_ETH, 0);
-        const availableETH = spendableETH * 0.3; // Only 30% per cycle
+        const availableETH = spendableETH * 0.3; // Only 30% per cycle, AFTER gas reserve
         if (availableETH < 0.0000001) {
           this._blocker = `Growth mode: need more ETH. Have ${walletETH.toFixed(6)}, reserve ${GAS_RESERVE_ETH}`;
           return;
@@ -328,8 +360,8 @@ class FCDirectorAI {
         const ethToAdd = Math.min(fcToAdd / poolRatio, availableETH);
         if (ethToAdd < 0.0000001) return;
 
-        // Cooldown
-        if (Date.now() - this._lastSwapTime < BASE_COOLDOWN_MS) return;
+        // Cooldown — extended when gas is low to preserve runway
+        if (Date.now() - this._lastSwapTime < BASE_COOLDOWN_MS * cycleCooldownMultiplier) return;
 
         await this._addLiquidity(account, fcToAdd, ethToAdd);
         this._lastSwapTime = Date.now();
@@ -352,7 +384,7 @@ class FCDirectorAI {
       if (sizing.amount === 0) { this._blocker = sizing.reason; return; }
       if (sizing.priceImpact > MAX_IMPACT_PCT) { this._blocker = `Impact ${sizing.priceImpact.toFixed(1)}% > ${MAX_IMPACT_PCT}%`; return; }
       if (sizing.ethOut < MIN_ETH_OUTPUT) { this._blocker = `Output too low: ${sizing.ethOut.toFixed(8)} ETH`; return; }
-      if (Date.now() - this._lastSwapTime < sizing.cooldownMs - 1000) return;
+      if (Date.now() - this._lastSwapTime < (sizing.cooldownMs * cycleCooldownMultiplier) - 1000) return;
 
       // Execute swap
       const result = await this._executeSwap(account, sizing.amount, sizing.ethOut);
@@ -383,9 +415,9 @@ class FCDirectorAI {
           this._state.reinvestCount++;
 
           if (reinvestETH > 0.0000001) {
-            // Re-read wallet ETH to make sure we have enough
+            // Re-read wallet ETH — never dip into gas runway
             const freshETH = await getETHBalance(account);
-            const safeReinvest = Math.min(reinvestETH, Math.max(freshETH - GAS_RESERVE_ETH, 0) * 0.4);
+            const safeReinvest = Math.min(reinvestETH, Math.max(freshETH - GAS_RESERVE_ETH * 1.5, 0) * 0.4);
             if (safeReinvest > 0.0000001) {
               const ratio = reserveFC / reserveETH;
               const fcForReinvest = Math.min(safeReinvest * ratio, walletFC * 0.25);  // Fractional
@@ -591,8 +623,12 @@ class FCDirectorAI {
       // Logs
       recentSwaps: (this._state.swapLog || []).slice(-10).reverse(),
       recentProfitSplits: (this._state.profitLog || []).slice(-5).reverse(),
-      // Config
+      // Gas runway
       gasReserve: GAS_RESERVE_ETH,
+      gasRunwayTxs: this._gasRunway || 0,
+      gasWarning: this._gasWarning || null,
+      gasCostPerTx: GAS_COST_ETH,
+      // Config
       maxDrainPct: MAX_DRAIN_PCT * 100,
       maxImpactPct: MAX_IMPACT_PCT,
     };
