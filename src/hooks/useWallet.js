@@ -56,19 +56,35 @@ export function useWallet() {
   }, [hasWallet]);
 
   const connect = useCallback(async () => {
-    const eth = getProvider();
+    let eth = getProvider();
+
+    // On mobile, wait a beat for late-injecting wallets (Coinbase Wallet, Trust, etc.)
+    if (!eth && isMobile()) {
+      await new Promise(r => setTimeout(r, 500));
+      eth = getProvider();
+    }
 
     if (!eth) {
-      // No wallet injected — on mobile, open inside MetaMask's in-app browser
+      // No wallet found — show options, don't just redirect to Play Store
       if (isMobile()) {
-        // MetaMask deep link: opens this dapp inside MetaMask's browser
-        const dappUrl = window.location.href.replace(/^https?:\/\//, '');
-        window.location.href = `https://metamask.app.link/dapp/${dappUrl}`;
+        // Give user a choice instead of auto-redirecting
+        const choice = confirm(
+          'No crypto wallet detected.\n\n' +
+          'OK = Open this page inside MetaMask app\n' +
+          'Cancel = Continue without wallet\n\n' +
+          'If you already have MetaMask installed, open it and use its built-in browser to visit this site.'
+        );
+        if (choice) {
+          const dappUrl = window.location.href.replace(/^https?:\/\//, '');
+          window.location.href = `https://metamask.app.link/dapp/${dappUrl}`;
+        } else {
+          setError('No wallet detected. Install MetaMask, Coinbase Wallet, or Trust Wallet, then open this site from inside the wallet app.');
+        }
         return;
       }
-      // Desktop without extension — open install page
+      // Desktop without extension
+      setError('No wallet extension found. Install MetaMask (metamask.io) or Coinbase Wallet, then refresh.');
       window.open('https://metamask.io/download/', '_blank');
-      setError('Install MetaMask extension, then refresh and try again.');
       return;
     }
 
