@@ -7,6 +7,7 @@ import Pool from './pages/Pool';
 import Trade from './pages/Trade';
 import HowItWorks from './pages/HowItWorks';
 import Deploy from './pages/Deploy';
+import Mint from './pages/Mint';
 import { useWallet } from './hooks/useWallet';
 import { useChainData } from './hooks/useChainData';
 
@@ -26,6 +27,7 @@ export default function App() {
             <Route path="/trade" element={<Trade chain={chain} wallet={wallet} />} />
             <Route path="/how" element={<HowItWorks />} />
             <Route path="/deploy" element={<Deploy wallet={wallet} />} />
+            <Route path="/mint" element={<Mint wallet={wallet} />} />
           </Routes>
         </main>
         <footer className="footer">
