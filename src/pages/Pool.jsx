@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import StatCard from '../components/StatCard';
 import ProgressBar from '../components/ProgressBar';
 import { BASESCAN_POOLS, BASESCAN_TOKEN } from '../config';
-import { usePoolData, joinPoolETH, createPool, claimRewards, depositETH, depositFNC, approveFNC, distributeRewards } from '../hooks/usePoolData';
+import { usePoolData, joinPoolETH, joinPoolFNC, createPool, claimRewards, depositETH, depositFNC, approveFNC, distributeRewards, inviteToPool, revokeInvite, checkInvited } from '../hooks/usePoolData';
+import { useDirectorAI } from '../hooks/useDirectorAI';
 
 const fmt = (n, d = 2) => n?.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }) || '0';
 
@@ -26,6 +27,11 @@ function PoolCard({ pool, isMember, wallet, isCreator, myMetrics, onRefresh }) {
   const [depositType, setDepositType] = useState('eth');
   const [rewardAmt, setRewardAmt] = useState('');
   const [distributing, setDistributing] = useState(false);
+  const [joinMode, setJoinMode] = useState('eth'); // 'eth' | 'fnc'
+  const [fncAmount, setFncAmount] = useState('');
+  const [inviteAddr, setInviteAddr] = useState('');
+  const [inviting, setInviting] = useState(false);
+  const [invitedList, setInvitedList] = useState([]);
   const [result, setResult] = useState(null);
   const isHance = pool.id === 0;
   const m = myMetrics;
@@ -50,25 +56,83 @@ function PoolCard({ pool, isMember, wallet, isCreator, myMetrics, onRefresh }) {
   };
 
   const handleJoin = async () => {
-    const eth = parseFloat(amount);
-    if (!eth || eth <= 0) { setResult({ ok: false, msg: 'Enter an ETH amount' }); return; }
-    setJoining(true); setResult(null);
+    if (joinMode === 'eth') {
+      const eth = parseFloat(amount);
+      if (!eth || eth <= 0) { setResult({ ok: false, msg: 'Enter an ETH amount' }); return; }
+      if (eth > 0.01 && !window.confirm(`You are about to deposit ${eth} ETH. Continue?`)) return;
+      setJoining(true); setResult(null);
+      try {
+        const tx = await joinPoolETH(pool.id, eth);
+        setResult({ ok: true, msg: `Joined! TX: ${tx.slice(0, 10)}...` });
+        setAmount('');
+        setTimeout(() => onRefresh?.(), 5000);
+      } catch (err) {
+        const msg = err.message || '';
+        if (msg.includes('4001') || msg.includes('rejected')) setResult({ ok: false, msg: 'Rejected by user' });
+        else setResult({ ok: false, msg: msg.slice(0, 100) });
+      }
+      setJoining(false);
+    } else {
+      // FNC join
+      const fnc = parseFloat(fncAmount);
+      if (!fnc || fnc <= 0) { setResult({ ok: false, msg: 'Enter an FNC amount' }); return; }
+      if (fnc > 100 && !window.confirm(`You are about to deposit ${fnc} FNC. Continue?`)) return;
+      setJoining(true); setResult(null);
+      try {
+        setResult({ ok: true, msg: 'Approving FNC for pool contract... confirm in wallet' });
+        try { await approveFNC(); } catch (approveErr) {
+          if (approveErr.message?.includes('4001') || approveErr.message?.includes('rejected')) throw approveErr;
+        }
+        setResult({ ok: true, msg: 'Joining pool with FNC... confirm in wallet' });
+        const tx = await joinPoolFNC(pool.id, fnc);
+        setResult({ ok: true, msg: `Joined! TX: ${tx.slice(0, 10)}...` });
+        setFncAmount('');
+        setTimeout(() => onRefresh?.(), 5000);
+      } catch (err) {
+        const msg = err.message || '';
+        if (msg.includes('4001') || msg.includes('rejected')) setResult({ ok: false, msg: 'Rejected by user' });
+        else setResult({ ok: false, msg: msg.slice(0, 100) });
+      }
+      setJoining(false);
+    }
+  };
+
+  const handleInvite = async () => {
+    const addr = inviteAddr.trim();
+    if (!addr || !addr.startsWith('0x') || addr.length !== 42) { setResult({ ok: false, msg: 'Enter a valid wallet address' }); return; }
+    setInviting(true); setResult(null);
     try {
-      const tx = await joinPoolETH(pool.id, eth);
-      setResult({ ok: true, msg: `Joined! TX: ${tx.slice(0, 10)}...` });
-      setAmount('');
-      setTimeout(() => onRefresh?.(), 5000);
+      const tx = await inviteToPool(pool.id, addr);
+      setResult({ ok: true, msg: `Invited! TX: ${tx.slice(0, 10)}...` });
+      setInvitedList(prev => [...prev, addr.toLowerCase()]);
+      setInviteAddr('');
     } catch (err) {
       const msg = err.message || '';
       if (msg.includes('4001') || msg.includes('rejected')) setResult({ ok: false, msg: 'Rejected by user' });
       else setResult({ ok: false, msg: msg.slice(0, 100) });
     }
-    setJoining(false);
+    setInviting(false);
+  };
+
+  const handleRevoke = async (addr) => {
+    if (!window.confirm(`Revoke invite for ${addr.slice(0, 6)}...${addr.slice(-4)}?`)) return;
+    setResult(null);
+    try {
+      const tx = await revokeInvite(pool.id, addr);
+      setResult({ ok: true, msg: `Revoked! TX: ${tx.slice(0, 10)}...` });
+      setInvitedList(prev => prev.filter(a => a !== addr.toLowerCase()));
+    } catch (err) {
+      const msg = err.message || '';
+      if (msg.includes('4001') || msg.includes('rejected')) setResult({ ok: false, msg: 'Rejected by user' });
+      else setResult({ ok: false, msg: msg.slice(0, 100) });
+    }
   };
 
   const handleDeposit = async () => {
     const amt = parseFloat(depositAmt);
     if (!amt || amt <= 0) { setResult({ ok: false, msg: `Enter a ${depositType.toUpperCase()} amount` }); return; }
+    if (depositType === 'eth' && amt > 0.01 && !window.confirm(`You are about to deposit ${amt} ETH. Continue?`)) return;
+    if (depositType === 'fnc' && amt > 100 && !window.confirm(`You are about to deposit ${amt} FNC. Continue?`)) return;
     setDepositing(true); setResult(null);
     try {
       let tx;
@@ -153,14 +217,22 @@ function PoolCard({ pool, isMember, wallet, isCreator, myMetrics, onRefresh }) {
         </div>
       </div>
 
-      {/* ── JOIN — One input, one button ── */}
+      {/* ── JOIN — ETH or FNC ── */}
       {canJoin && (
         <div className="pool-join">
+          <div className="pool-deposit-toggle" style={{ marginBottom: 8 }}>
+            <button onClick={() => setJoinMode('eth')} className={'btn btn-sm ' + (joinMode === 'eth' ? 'btn-primary' : 'btn-outline')}>Join with ETH</button>
+            <button onClick={() => setJoinMode('fnc')} className={'btn btn-sm ' + (joinMode === 'fnc' ? 'btn-primary' : 'btn-outline')}>Join with FNC</button>
+          </div>
           <div className="pool-join-row">
-            <input type="number" step="0.001" min="0" placeholder="ETH amount" value={amount} onChange={e => setAmount(e.target.value)} className="pool-input" />
+            {joinMode === 'eth' ? (
+              <input type="number" step="0.001" min="0" placeholder="ETH amount" value={amount} onChange={e => setAmount(e.target.value)} className="pool-input" />
+            ) : (
+              <input type="number" step="1" min="0" placeholder="FNC amount" value={fncAmount} onChange={e => setFncAmount(e.target.value)} className="pool-input" />
+            )}
             <button onClick={handleJoin} disabled={joining} className="btn btn-primary">{joining ? 'Joining...' : 'Join Pool'}</button>
           </div>
-          <div className="pool-join-note">5% ecosystem fee. Gas under $0.01 on Base.</div>
+          <div className="pool-join-note">{joinMode === 'eth' ? '5% ecosystem fee. Gas under $0.01 on Base.' : 'Approve FNC, then join. Gas under $0.01 on Base.'}</div>
         </div>
       )}
 
@@ -234,6 +306,28 @@ function PoolCard({ pool, isMember, wallet, isCreator, myMetrics, onRefresh }) {
         </div>
       )}
 
+      {/* ── CREATOR: Invite Members ── */}
+      {isCreator && wallet.account && wallet.isBase && (
+        <div className="pool-metrics-section" style={{ borderColor: 'rgba(124,58,237,0.2)', background: 'rgba(124,58,237,0.04)' }}>
+          <h4 className="pool-metrics-title" style={{ color: '#7c3aed' }}>Invite Members</h4>
+          <div className="pool-join-row">
+            <input type="text" placeholder="0x... wallet address" value={inviteAddr} onChange={e => setInviteAddr(e.target.value)} className="pool-input" style={{ fontFamily: 'monospace', fontSize: 12 }} />
+            <button onClick={handleInvite} disabled={inviting} className="btn btn-primary btn-sm">{inviting ? 'Inviting...' : 'Invite'}</button>
+          </div>
+          {invitedList.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>Invited:</div>
+              {invitedList.map(addr => (
+                <div key={addr} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 12, fontFamily: 'monospace' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>{addr.slice(0, 6)}...{addr.slice(-4)}</span>
+                  <button onClick={() => handleRevoke(addr)} className="btn btn-sm btn-outline" style={{ padding: '1px 6px', fontSize: 10, color: '#ef4444', borderColor: '#ef4444' }}>Revoke</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {result && <div className={'pool-result' + (result.ok ? ' ok' : ' err')}>{result.msg}</div>}
 
       {isHance && (
@@ -248,6 +342,7 @@ function PoolCard({ pool, isMember, wallet, isCreator, myMetrics, onRefresh }) {
 // ─── Main Pool Page ─────────────────────────────────────────
 export default function Pool({ chain, wallet }) {
   const { pools, founder, mainPool, loading, membership, myMetrics, refresh } = usePoolData(wallet.account);
+  const { status: directorStatus } = useDirectorAI();
   const [creating, setCreating] = useState(false);
   const [newPoolName, setNewPoolName] = useState('');
   const [createResult, setCreateResult] = useState(null);
@@ -285,6 +380,60 @@ export default function Pool({ chain, wallet }) {
     <div className="page">
       <h1>Family Pools</h1>
       <p className="page-sub">Pick a pool, deposit ETH, start earning. That's it.</p>
+
+      {/* ─── TASK 1: Uniswap Trading Pool ─── */}
+      <div className="section">
+        <h2>Uniswap Trading Pool</h2>
+        <p className="page-sub" style={{ marginBottom: 12 }}>Where FC is bought and sold. Family Pools below earn rewards from this trading activity.</p>
+        <div className="stats-grid stats-grid-4">
+          <StatCard label="FC in Pool" value={fmt(chain.poolReserveFC, 2) + ' FC'} sub="Reserve" color="#f59e0b" />
+          <StatCard label="ETH in Pool" value={fmt(chain.poolReserveETH, 6) + ' ETH'} sub="Reserve" color="#3b82f6" />
+          <StatCard label="Pool Depth" value={'$' + fmt(chain.poolLiquidityUsd, 2)} sub="Total liquidity" color="#10b981" />
+          <StatCard label="FC Price" value={'$' + fmt(chain.fcPriceUsd, 6)} sub={fmt(chain.fcPrice, 10) + ' ETH'} color="#00ffcc" />
+        </div>
+      </div>
+
+      {/* ─── TASK 2: Your Total Position ─── */}
+      {wallet.account && (
+        <div className="section">
+          <h2>Your Total Position</h2>
+          <div className="stats-grid stats-grid-4">
+            <StatCard
+              label="ETH in Pools"
+              value={fmt(totalDeposited, 6) + ' ETH'}
+              sub={'$' + fmt(totalDeposited * chain.ethPrice, 2)}
+              color="#3b82f6"
+            />
+            <StatCard
+              label="FC in Wallet"
+              value={fmt(chain.walletFC, 2) + ' FC'}
+              sub={'$' + fmt(chain.walletFC * chain.fcPriceUsd, 2)}
+              color="#f59e0b"
+            />
+            <StatCard
+              label="Claimable Rewards"
+              value={fmt(totalClaimable, 4) + ' FC'}
+              sub={'$' + fmt(totalClaimable * chain.fcPriceUsd, 4)}
+              color="#10b981"
+            />
+            <StatCard
+              label="Total USD Value"
+              value={'$' + fmt(
+                (totalDeposited * chain.ethPrice) +
+                (chain.walletFC * chain.fcPriceUsd) +
+                (totalClaimable * chain.fcPriceUsd), 2
+              )}
+              sub="Pools + Wallet + Rewards"
+              color="#7c3aed"
+            />
+          </div>
+          {chain.walletFC > 0 && (
+            <p style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>
+              LP token share not included yet. If you hold Uniswap LP tokens, your position is larger.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Your Portfolio */}
       {myPoolIds.length > 0 && (
@@ -372,6 +521,29 @@ export default function Pool({ chain, wallet }) {
           <div className="step"><div className="step-num">1</div><div><strong>Connect your wallet</strong><p>MetaMask, Coinbase, or any wallet on Base.</p></div></div>
           <div className="step"><div className="step-num">2</div><div><strong>Pick a pool and deposit</strong><p>Enter your ETH amount and confirm. One transaction.</p></div></div>
           <div className="step"><div className="step-num">3</div><div><strong>Earn and claim</strong><p>The Director AI trades 24/7. Claim your FC rewards anytime.</p></div></div>
+        </div>
+      </div>
+
+      {/* ─── TASK 4: Reward Activity ─── */}
+      <div className="section">
+        <h2>Reward Activity</h2>
+        <div style={{ padding: '12px 16px', background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.15)', borderRadius: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+          <p style={{ margin: '0 0 8px' }}>Rewards are funded by the Director AI's trading profits. Every 10 successful trades, the Director distributes 5% of net profit as FC to Pool #0 (Founder Pool).</p>
+          {directorStatus?.distributionLog?.length > 0 ? (
+            <p style={{ margin: '0 0 6px', color: '#10b981', fontWeight: 500 }}>
+              Last distribution: {fmt(directorStatus.distributionLog[0]?.fcAmount, 2)} FC to Pool #0
+              {directorStatus.distributionLog[0]?.time
+                ? ` (${timeAgo(Math.floor(directorStatus.distributionLog[0].time / 1000))})`
+                : ''}
+            </p>
+          ) : (
+            <p style={{ margin: '0 0 6px', color: 'var(--text-dim)' }}>No distributions yet -- the Director will distribute after its next 10 trades.</p>
+          )}
+          {directorStatus?.totalSwapCount > 0 && (
+            <p style={{ margin: 0, fontSize: 11, color: 'var(--text-dim)' }}>
+              Director: {directorStatus.totalSwapCount} trades completed | {directorStatus.tradesSinceLastDistribution || 0}/10 until next distribution
+            </p>
+          )}
         </div>
       </div>
 

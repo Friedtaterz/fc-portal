@@ -266,11 +266,12 @@ export async function actionCreatePair() {
   return sendTx(UNISWAP_FACTORY, data, '0x0', 3000000);
 }
 
-export async function actionAddLiquidity(fcAmount, ethAmount) {
+export async function actionAddLiquidity(fcAmount, ethAmount, slippagePct = 5) {
   const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+  const slippageFactor = (100 - slippagePct) / 100;
   const tokenAmtWei = encU256(BigInt(Math.floor(fcAmount)) * BigInt(1e18));
-  const minToken = encU256(BigInt(Math.floor(fcAmount * 0.95)) * BigInt(1e18)); // 5% slippage
-  const minETH = encU256(BigInt(Math.floor(ethAmount * 0.95 * 1e18))); // 5% slippage
+  const minToken = encU256(BigInt(Math.floor(fcAmount * slippageFactor)) * BigInt(1e18));
+  const minETH = encU256(BigInt(Math.floor(ethAmount * slippageFactor * 1e18)));
   const deadline = encU256(Math.floor(Date.now() / 1000) + 1800); // 30 min
   const ethWei = '0x' + BigInt(Math.floor(ethAmount * 1e18)).toString(16);
 

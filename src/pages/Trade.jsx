@@ -8,16 +8,102 @@ const fmt = (n, d = 2) => n?.toLocaleString(undefined, { minimumFractionDigits: 
 
 // ─── Director AI Dashboard ──────────────────────────────────────
 function DirectorPanel({ chain }) {
-  const { status, start, stop, resume } = useDirectorAI();
+  const { status, start, stop, resume, setMode } = useDirectorAI();
   if (!status) return null;
 
   const poolUsd = chain.poolLiquidityUsd || 0;
   const currentTier = TIERS.find(t => poolUsd < t.max) || TIERS[TIERS.length - 1];
+  const mode = status.mode || 'suggest';
+  const adaptiveLabel = status.adaptiveMode === 'micro' ? 'MICRO' : status.adaptiveMode === 'careful' ? 'CAREFUL' : 'NORMAL';
+  const adaptiveColor = status.adaptiveMode === 'micro' ? '#f59e0b' : status.adaptiveMode === 'careful' ? '#3b82f6' : '#10b981';
 
   return (
     <div className="section">
       <h2>FC Director AI</h2>
-      <p className="section-sub">Autonomous trading engine. Scales from micro-trades to larger ones as liquidity grows. Always keeps gas reserves.</p>
+      <p className="section-sub">
+        {mode === 'suggest'
+          ? 'Suggest mode — shows optimal trades without executing. Switch to Auto to trade automatically.'
+          : 'Auto mode — executes trades automatically with adaptive safety limits.'}
+      </p>
+
+      {/* Goal Progress */}
+      {status.goal && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#888', marginBottom: 4 }}>
+            <span>Goal: <strong style={{ color: status.goal.allCompleted ? '#10b981' : '#00ffcc' }}>{status.goal.current}</strong></span>
+            <span>{status.goal.completed}/{status.goal.total}</span>
+          </div>
+          <div style={{ background: '#1a1a2e', borderRadius: 6, height: 8, overflow: 'hidden' }}>
+            <div style={{ width: `${status.goal.pct}%`, height: '100%', background: 'linear-gradient(90deg, #3b82f6, #10b981)', borderRadius: 6, transition: 'width 0.5s' }} />
+          </div>
+        </div>
+      )}
+
+      {/* Defense Alert */}
+      {status.defense && status.defense.level !== 'normal' && (
+        <div style={{
+          background: status.defense.level === 'critical' ? '#2a0a0a' : '#1a1a0a',
+          border: `1px solid ${status.defense.level === 'critical' ? '#ef4444' : '#f59e0b'}`,
+          borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 12,
+          color: status.defense.level === 'critical' ? '#ef4444' : '#f59e0b',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <span>Defense: <strong>{status.defense.level.toUpperCase()}</strong> -- {status.defense.recentAnomalies} anomalies in 10min</span>
+          <span>{status.defense.sandwichCount} sandwich alerts total</span>
+        </div>
+      )}
+
+      {/* Mode Selector */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
+        {['suggest', 'auto'].map(m => (
+          <button key={m} onClick={() => {
+            if (m === 'auto' && mode !== 'auto') {
+              if (!window.confirm('Enable Auto mode? The Director AI will execute trades automatically using your wallet.')) return;
+            }
+            setMode(m);
+          }} className={mode === m ? 'btn btn-primary' : 'btn btn-outline'}
+            style={{ flex: 1, textTransform: 'uppercase', fontSize: 13, fontWeight: 700 }}>
+            {m === 'suggest' ? 'Suggest Trades' : 'Auto Trade'}
+          </button>
+        ))}
+      </div>
+
+      {/* Adaptive Mode Indicator */}
+      {status.running && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '8px 12px', background: '#111', borderRadius: 8, borderLeft: `3px solid ${adaptiveColor}` }}>
+          <span style={{ color: adaptiveColor, fontWeight: 700, fontSize: 13 }}>{adaptiveLabel}</span>
+          <span style={{ color: '#888', fontSize: 12 }}>Max {status.maxImpact}% impact per trade | Pool ${fmt(poolUsd)}</span>
+        </div>
+      )}
+
+      {/* Trinity State (past / present / future) */}
+      {status.trinity && status.trinity.whatIs && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 12, fontSize: 11 }}>
+          <div style={{ background: '#111', borderRadius: 6, padding: '8px 10px', borderTop: '2px solid #666' }}>
+            <div style={{ color: '#888', fontWeight: 700, marginBottom: 4 }}>WAS</div>
+            {status.trinity.whatWas ? (<>
+              <div style={{ color: '#aaa' }}>${fmt(status.trinity.whatWas.poolUsd, 0)} pool</div>
+              <div style={{ color: '#aaa' }}>{status.trinity.whatWas.priceUsd < 0.01 ? status.trinity.whatWas.priceUsd.toFixed(6) : fmt(status.trinity.whatWas.priceUsd, 4)} $/FC</div>
+            </>) : <div style={{ color: '#555' }}>No prior cycle</div>}
+          </div>
+          <div style={{ background: '#0a1a1a', borderRadius: 6, padding: '8px 10px', borderTop: '2px solid #10b981' }}>
+            <div style={{ color: '#10b981', fontWeight: 700, marginBottom: 4 }}>IS</div>
+            <div style={{ color: '#ccc' }}>${fmt(status.trinity.whatIs.poolUsd, 0)} pool</div>
+            <div style={{ color: '#ccc' }}>{status.trinity.whatIs.priceUsd < 0.01 ? status.trinity.whatIs.priceUsd.toFixed(6) : fmt(status.trinity.whatIs.priceUsd, 4)} $/FC</div>
+            <div style={{ color: '#888' }}>{status.trinity.whatIs.tier}</div>
+          </div>
+          <div style={{ background: '#111', borderRadius: 6, padding: '8px 10px', borderTop: '2px solid #3b82f6' }}>
+            <div style={{ color: '#3b82f6', fontWeight: 700, marginBottom: 4 }}>WILL BE</div>
+            {status.trinity.whatWillBe ? (<>
+              <div style={{ color: '#aaa' }}>{status.trinity.whatWillBe.nextAction}</div>
+              <div style={{ color: '#aaa' }}>Confidence: {status.trinity.whatWillBe.confidence}%</div>
+              <div style={{ color: status.trinity.whatWillBe.trend === 'growing' ? '#10b981' : status.trinity.whatWillBe.trend === 'contracting' ? '#ef4444' : '#888' }}>
+                {status.trinity.whatWillBe.trend}
+              </div>
+            </>) : <div style={{ color: '#555' }}>Projecting...</div>}
+          </div>
+        </div>
+      )}
 
       {/* Controls */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -31,9 +117,52 @@ function DirectorPanel({ chain }) {
         )}
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: status.running ? (status.paused ? '#f59e0b' : '#10b981') : '#666', fontSize: 14 }}>
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: status.running ? (status.paused ? '#f59e0b' : '#10b981') : '#666', display: 'inline-block' }} />
-          {status.running ? (status.paused ? 'Paused' : 'Running') : 'Stopped'}
+          {status.running ? (status.paused ? 'Paused' : mode === 'suggest' ? 'Watching' : 'Trading') : 'Stopped'}
         </span>
       </div>
+
+      {/* Suggestion Panel (suggest mode) */}
+      {mode === 'suggest' && status.suggestion && (
+        <div style={{ background: '#0a1a0a', border: '1px solid #10b981', borderRadius: 8, padding: 14, marginBottom: 12 }}>
+          <div style={{ color: '#10b981', fontWeight: 700, fontSize: 13, marginBottom: 6 }}>Suggested Trade</div>
+          <div style={{ color: '#ccc', fontSize: 13 }}>{status.suggestion.reason}</div>
+          {status.suggestion.trendAdvice && (
+            <div style={{
+              marginTop: 6, padding: '6px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+              background: status.suggestion.trend === 'growing' || status.suggestion.trend === 'price_rising' || status.suggestion.trend === 'liquidity_inflow' ? '#0a2a1a'
+                : status.suggestion.trend === 'contracting' || status.suggestion.trend === 'price_falling' || status.suggestion.trend === 'liquidity_outflow' ? '#2a0a0a'
+                : '#1a1a2e',
+              color: status.suggestion.trend === 'growing' || status.suggestion.trend === 'price_rising' || status.suggestion.trend === 'liquidity_inflow' ? '#10b981'
+                : status.suggestion.trend === 'contracting' || status.suggestion.trend === 'price_falling' || status.suggestion.trend === 'liquidity_outflow' ? '#ef4444'
+                : '#888',
+              borderLeft: `3px solid ${
+                status.suggestion.trend === 'growing' || status.suggestion.trend === 'price_rising' || status.suggestion.trend === 'liquidity_inflow' ? '#10b981'
+                : status.suggestion.trend === 'contracting' || status.suggestion.trend === 'price_falling' || status.suggestion.trend === 'liquidity_outflow' ? '#ef4444'
+                : '#555'
+              }`,
+            }}>
+              {status.suggestion.trendAdvice} | Confidence: {status.suggestion.confidence}%
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 12, color: '#888' }}>
+            <span>Tier: {status.suggestion.tier}</span>
+            <span>Mode: {status.suggestion.adaptiveMode}</span>
+            <span>Gas profit: {fmt(status.suggestion.gasProfit, 8)} ETH</span>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <a href={`https://app.uniswap.org/swap?inputCurrency=${FC_TOKEN}&chain=base`} target="_blank" rel="noreferrer"
+              className="btn btn-primary" style={{ fontSize: 12 }}>
+              Trade Manually on Uniswap
+            </a>
+            <button onClick={() => {
+              if (!window.confirm('Enable Auto mode? The Director AI will execute trades automatically using your wallet.')) return;
+              setMode('auto');
+            }} className="btn btn-outline" style={{ fontSize: 12 }}>
+              Enable Auto Mode
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Blocker / Status — with actionable fix buttons */}
       {status.blocker && (
@@ -114,7 +243,9 @@ function DirectorPanel({ chain }) {
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 12, fontSize: 12, color: '#666' }}>
         <span>Gas runway: ~{status.gasRunwayTxs || '?'} txs</span>
         <span>Max drain: {status.maxDrainPct}%/trade</span>
-        <span>Max impact: {status.maxImpactPct}%</span>
+        <span style={{ color: adaptiveColor }}>Max impact: {status.maxImpact}% ({adaptiveLabel})</span>
+        <span>Hourly drain: {status.hourlyDrainFC?.toFixed(1) || 0} FC / {status.hourlyDrainCapPct}% cap</span>
+        <span>Swaps/hr: {status.swapsLastHour || 0}</span>
       </div>
 
       {/* Recent Swaps */}
@@ -149,12 +280,64 @@ function DirectorPanel({ chain }) {
   );
 }
 
+// ─── Pool Economy Panel ─────────────────────────────────────────
+function PoolEconomyPanel({ chain }) {
+  const { status } = useDirectorAI();
+  if (!status) return null;
+
+  // Fee split: derive from pool depth since portal Director doesn't track it
+  const poolUsd = chain.poolLiquidityUsd || 0;
+  const feeSplitBps = poolUsd < 1000 ? 8000 : poolUsd < 10000 ? 5000 : poolUsd < 100000 ? 3000 : 2000;
+  const familyPct = Math.round(feeSplitBps / 100);
+  const mainPoolPct = 100 - familyPct;
+  const splitLabel = poolUsd < 1000 ? 'Attract members' : poolUsd < 10000 ? 'Balanced' : poolUsd < 100000 ? 'Fund buybacks' : 'Max buyback capital';
+
+  return (
+    <div className="section">
+      <h2>Pool Economy</h2>
+      <p className="section-sub">MainPool buybacks, fee split, and strategic burns -- the self-sustaining loop.</p>
+      <div className="stats-grid stats-grid-4">
+        <StatCard
+          label="MainPool ETH"
+          value={fmt(status.totalEthReinvested || 0, 6)}
+          sub={'$' + fmt((status.totalEthReinvested || 0) * (chain.ethPrice || 0))}
+          color="#3b82f6"
+        />
+        <StatCard
+          label="Last Buyback"
+          value={status.recentProfitSplits?.length > 0
+            ? new Date(status.recentProfitSplits[0].time).toLocaleDateString()
+            : 'None yet'}
+          sub={status.reinvestCount > 0 ? `${status.reinvestCount} reinvests` : 'Waiting for activity'}
+          color="#f59e0b"
+        />
+        <StatCard
+          label="Fee Split"
+          value={`${familyPct}% / ${mainPoolPct}%`}
+          sub={`${splitLabel} (Family / MainPool)`}
+          color="#10b981"
+        />
+        <StatCard
+          label="Total Swaps"
+          value={status.totalSwapCount || 0}
+          sub={`${fmt(status.totalFcSold || 0, 2)} FC sold`}
+          color="#ef4444"
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Trade Page ─────────────────────────────────────────────
 export default function Trade({ chain, wallet }) {
   const [liqFC, setLiqFC] = useState('50000');
   const [liqETH, setLiqETH] = useState('0.005');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+  const [slippage, setSlippage] = useState(() => {
+    const saved = localStorage.getItem('fc_portal_slippage');
+    return saved ? Number(saved) : 5;
+  });
   const tradingReady = chain.poolExists;
 
   const handleAddLiquidity = async () => {
@@ -164,7 +347,7 @@ export default function Trade({ chain, wallet }) {
     setBusy(true);
     setResult({ ok: true, msg: 'Confirm in MetaMask...' });
     try {
-      const tx = await actionAddLiquidity(fc, eth);
+      const tx = await actionAddLiquidity(fc, eth, slippage);
       setResult({ ok: true, msg: `Liquidity added! TX: ${tx.slice(0, 10)}... Refresh in a few seconds to see trading go live.` });
     } catch (err) {
       const msg = err.message || '';
@@ -229,6 +412,11 @@ export default function Trade({ chain, wallet }) {
         <DirectorPanel chain={chain} />
       )}
 
+      {/* Pool Economy — fee split, buybacks, burns */}
+      {wallet.account && wallet.isBase && tradingReady && (
+        <PoolEconomyPanel chain={chain} />
+      )}
+
       {/* Add Liquidity — only shows when pool has no reserves */}
       {wallet.account && wallet.isBase && !tradingReady && (
         <div className="section">
@@ -243,6 +431,16 @@ export default function Trade({ chain, wallet }) {
               <label style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>ETH Amount</label>
               <input type="number" value={liqETH} onChange={e => setLiqETH(e.target.value)} className="pool-input" step="0.001" />
             </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <label style={{ fontSize: 12, color: '#888' }}>Slippage:</label>
+            {[1, 3, 5, 10].map(pct => (
+              <button key={pct} onClick={() => { setSlippage(pct); localStorage.setItem('fc_portal_slippage', String(pct)); }}
+                className={slippage === pct ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm'}
+                style={{ fontSize: 11, padding: '4px 10px', minWidth: 0 }}>
+                {pct}%
+              </button>
+            ))}
           </div>
           <button onClick={handleAddLiquidity} disabled={busy} className="btn btn-primary" style={{ width: '100%' }}>
             {busy ? 'Confirm in MetaMask...' : 'Add Liquidity & Go Live'}

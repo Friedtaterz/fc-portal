@@ -286,7 +286,7 @@ export function usePoolData(account) {
 
   useEffect(() => {
     poll();
-    const interval = setInterval(poll, 60_000); // every 60s to avoid rate limits
+    const interval = setInterval(poll, 20_000); // every 20s — live pool data
     return () => clearInterval(interval);
   }, [poll]);
 
@@ -546,6 +546,32 @@ export async function revokeInvite(poolId, memberAddress) {
       to: FC_POOLS,
       data,
       gas: '0x' + (80000).toString(16),
+    }],
+  });
+  return txHash;
+}
+
+// ─── Join with FNC (new members) ──────────────────────────
+export async function joinPoolFNC(poolId, fncAmount) {
+  if (!window.ethereum) throw new Error('No wallet');
+  const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+  if (!accounts[0]) throw new Error('Connect wallet first');
+
+  const whole = BigInt(Math.floor(fncAmount));
+  const amountWei = whole * BigInt('1000000000000000000');
+  const amountHex = amountWei.toString(16).padStart(64, '0');
+
+  const data = SEL.joinPoolFNC
+    + poolId.toString(16).padStart(64, '0')
+    + amountHex;
+
+  const txHash = await window.ethereum.request({
+    method: 'eth_sendTransaction',
+    params: [{
+      from: accounts[0],
+      to: FC_POOLS,
+      data,
+      gas: '0x' + (500000).toString(16),
     }],
   });
   return txHash;

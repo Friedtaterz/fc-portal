@@ -139,19 +139,35 @@ export default function Mint({ wallet }) {
           </div>
         ) : (
           <div>
+            {/* One-click daily mint */}
+            <button
+              onClick={() => { setAmount('50000'); setTimeout(() => handleMint(), 100); }}
+              disabled={minting || budgetRemaining === 0}
+              className="btn btn-primary btn-lg"
+              style={{ width: '100%', padding: '18px 28px', fontSize: 18, marginBottom: 16 }}
+            >
+              {minting ? 'Minting...' : budgetRemaining !== null && budgetRemaining < 1 ? 'Daily Limit Reached — Resets in 24h' : `Mint ${budgetRemaining !== null ? fmt(Math.min(budgetRemaining, 50000)) : '50,000'} FC`}
+            </button>
+            {budgetRemaining !== null && budgetRemaining >= 1 && (
+              <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--text-dim)', marginBottom: 16 }}>
+                One click. {fmt(Math.min(budgetRemaining, 50000))} FC → your wallet → Director sells for ETH profit.
+              </div>
+            )}
+
+            {/* Manual amount */}
             <div className="pool-join-row">
               <input
                 type="number"
                 step="1"
                 min="1"
                 max="50000"
-                placeholder="FC amount (max 50,000 per 24h)"
+                placeholder="Or enter custom amount"
                 value={amount}
                 onChange={e => setAmount(e.target.value)}
                 className="pool-input"
               />
               <button onClick={handleMint} disabled={minting} className="btn btn-primary">
-                {minting ? 'Minting...' : 'Mint FC'}
+                {minting ? 'Minting...' : 'Mint'}
               </button>
             </div>
             <div className="pool-join-note">
