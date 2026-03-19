@@ -13,7 +13,7 @@ function isMobile() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }
 
-// Coinbase Wallet SDK — 'all' mode lets users connect existing CB Wallet OR create new one
+// Coinbase Wallet SDK — 'smartWalletOnly' avoids the create-wallet KYC flow
 let _cbProvider = null;
 function getCoinbaseProvider() {
   if (_cbProvider) return _cbProvider;
@@ -22,7 +22,7 @@ function getCoinbaseProvider() {
     appChainIds: [BASE_CHAIN_ID],
   });
   _cbProvider = sdk.makeWeb3Provider({
-    options: 'all',
+    options: 'smartWalletOnly',
   });
   return _cbProvider;
 }
@@ -37,16 +37,27 @@ export function useWallet() {
   const isBase = chainId === BASE_CHAIN_ID;
   const providerRef = useRef(null);
   const [hasWallet, setHasWallet] = useState(!!getInjectedProvider());
+  const [hasMetaMaskExt, setHasMetaMaskExt] = useState(false);
 
-  // Detect late-injected wallets
+  // Detect late-injected wallets (MetaMask can be slow)
   useEffect(() => {
+    const detect = () => {
+      const eth = getInjectedProvider();
+      if (eth) {
+        setHasWallet(true);
+        // Check if it's actually MetaMask (vs Coinbase or other)
+        if (eth.isMetaMask || eth.providers?.some(p => p.isMetaMask)) {
+          setHasMetaMaskExt(true);
+        }
+      }
+    };
+    detect();
     if (hasWallet) return;
-    if (getInjectedProvider()) { setHasWallet(true); return; }
-    const onInjected = () => { if (getInjectedProvider()) setHasWallet(true); };
+    const onInjected = () => detect();
     window.addEventListener('ethereum#initialized', onInjected);
     window.addEventListener('eip6963:announceProvider', onInjected);
     try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch {}
-    const check = setInterval(() => { if (getInjectedProvider()) { setHasWallet(true); clearInterval(check); } }, 200);
+    const check = setInterval(() => { detect(); if (hasWallet) clearInterval(check); }, 200);
     const stop = setTimeout(() => clearInterval(check), 5000);
     return () => { window.removeEventListener('ethereum#initialized', onInjected); window.removeEventListener('eip6963:announceProvider', onInjected); clearInterval(check); clearTimeout(stop); };
   }, [hasWallet]);
@@ -120,9 +131,9 @@ export function useWallet() {
   const connect = useCallback(async () => {
     let eth = getInjectedProvider();
 
-    // On mobile, wait a beat for late-injecting wallets
-    if (!eth && isMobile()) {
-      await new Promise(r => setTimeout(r, 500));
+    // Wait a beat for late-injecting wallets (MetaMask can be slow on both mobile and desktop)
+    if (!eth) {
+      await new Promise(r => setTimeout(r, 600));
       eth = getInjectedProvider();
     }
 
@@ -132,6 +143,22 @@ export function useWallet() {
     } else {
       // No wallet detected — show the picker modal
       setShowWalletModal(true);
+    }
+  }, [finishConnect]);
+
+  // Connect via injected MetaMask (called from modal — works even when detection was slow)
+  const connectMetaMask = useCallback(async () => {
+    // Try to find MetaMask specifically in multi-provider setups
+    let eth = null;
+    if (window.ethereum?.providers?.length) {
+      eth = window.ethereum.providers.find(p => p.isMetaMask) || null;
+    }
+    if (!eth && window.ethereum?.isMetaMask) eth = window.ethereum;
+    if (!eth) eth = getInjectedProvider(); // last resort — use whatever is there
+    if (eth) {
+      await finishConnect(eth);
+    } else {
+      setError('MetaMask not found. Install it and refresh the page.');
     }
   }, [finishConnect]);
 
@@ -174,7 +201,7 @@ export function useWallet() {
 
   return {
     account, shortAddress, chainId, isBase, connecting, error,
-    hasMetaMask: hasWallet, connect, switchToBase, disconnect,
+    hasMetaMask: hasWallet, hasMetaMaskExt, connect, connectMetaMask, switchToBase, disconnect,
     showWalletModal, closeWalletModal, connectCoinbase, openInMetaMask,
     isMobile: isMobile(),
   };

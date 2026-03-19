@@ -10,41 +10,41 @@ export default function WalletModal({ wallet }) {
 
         <h2 className="wallet-modal-title">Connect Your Wallet</h2>
         <p className="wallet-modal-subtitle">
-          Choose how you want to connect. If you don't have a wallet yet, Coinbase will help you create one.
+          Choose how you want to connect.{' '}
+          {!wallet.hasMetaMaskExt && !wallet.isMobile && 'No wallet? Install MetaMask to get started.'}
         </p>
 
         <div className="wallet-modal-options">
-          {/* Coinbase — works in browser, handles both existing users and new wallet creation */}
-          <button className="wallet-modal-option" onClick={wallet.connectCoinbase} disabled={wallet.connecting}>
-            <div className="wallet-modal-icon" style={{ background: '#0052FF' }}>C</div>
-            <div className="wallet-modal-info">
-              <span className="wallet-modal-name">
-                Coinbase Wallet
-                <span className="wallet-modal-tag">Recommended</span>
-              </span>
-              <span className="wallet-modal-desc">
-                Connect existing wallet or create a new one — no app needed
-              </span>
-            </div>
-            <span className="wallet-modal-arrow">&rsaquo;</span>
-          </button>
-
-          {/* MetaMask — only on mobile, opens page in MetaMask's browser */}
-          {wallet.isMobile && (
+          {/* MetaMask — PRIMARY option. Connect button on desktop if detected, deep link on mobile */}
+          {wallet.isMobile ? (
             <button className="wallet-modal-option" onClick={wallet.openInMetaMask}>
               <div className="wallet-modal-icon" style={{ background: '#E2761B' }}>M</div>
               <div className="wallet-modal-info">
-                <span className="wallet-modal-name">MetaMask</span>
+                <span className="wallet-modal-name">
+                  MetaMask
+                  <span className="wallet-modal-tag">Recommended</span>
+                </span>
                 <span className="wallet-modal-desc">
                   Opens this page inside the MetaMask app
                 </span>
               </div>
               <span className="wallet-modal-arrow">&rsaquo;</span>
             </button>
-          )}
-
-          {/* Desktop without extension — link to install */}
-          {!wallet.isMobile && (
+          ) : wallet.hasMetaMaskExt ? (
+            <button className="wallet-modal-option" onClick={wallet.connectMetaMask} disabled={wallet.connecting}>
+              <div className="wallet-modal-icon" style={{ background: '#E2761B' }}>M</div>
+              <div className="wallet-modal-info">
+                <span className="wallet-modal-name">
+                  MetaMask
+                  <span className="wallet-modal-tag">Recommended</span>
+                </span>
+                <span className="wallet-modal-desc">
+                  Connect your MetaMask wallet
+                </span>
+              </div>
+              <span className="wallet-modal-arrow">&rsaquo;</span>
+            </button>
+          ) : (
             <a
               className="wallet-modal-option"
               href="https://metamask.io/download/"
@@ -53,7 +53,10 @@ export default function WalletModal({ wallet }) {
             >
               <div className="wallet-modal-icon" style={{ background: '#E2761B' }}>M</div>
               <div className="wallet-modal-info">
-                <span className="wallet-modal-name">MetaMask</span>
+                <span className="wallet-modal-name">
+                  MetaMask
+                  <span className="wallet-modal-tag">Recommended</span>
+                </span>
                 <span className="wallet-modal-desc">
                   Install the browser extension, then refresh
                 </span>
@@ -61,6 +64,18 @@ export default function WalletModal({ wallet }) {
               <span className="wallet-modal-arrow">&rsaquo;</span>
             </a>
           )}
+
+          {/* Coinbase — secondary option for users who already have Coinbase Wallet */}
+          <button className="wallet-modal-option" onClick={wallet.connectCoinbase} disabled={wallet.connecting}>
+            <div className="wallet-modal-icon" style={{ background: '#0052FF' }}>C</div>
+            <div className="wallet-modal-info">
+              <span className="wallet-modal-name">Coinbase Wallet</span>
+              <span className="wallet-modal-desc">
+                Connect existing Coinbase Wallet
+              </span>
+            </div>
+            <span className="wallet-modal-arrow">&rsaquo;</span>
+          </button>
         </div>
 
         {wallet.error && (
