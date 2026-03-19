@@ -35,7 +35,8 @@
  *   - Adaptive impact limits based on pool depth
  *   - Never sells >40% of wallet FC
  *   - Never drains >2% of pool per trade, >5% per hour
- *   - Gas refuels BLOCKED in building tier (preserves price)
+ *   - PROACTIVE GAS: tracks burn rate, retains ETH when <=2 trades of gas left
+ *   - REACTIVE GAS: sells tiny FC for gas when needed (building-safe limits)
  *   - Price floor: pauses if FC drops >20% in 1 hour
  *   - Pool floor: pauses if pool shrinks >30% in 1 hour
  *   - Full audit trail — every action logged
@@ -51,7 +52,7 @@ const BASE_COOLDOWN_MS = 30_000;
 const MAX_SELL_RATIO = 0.40;
 const MIN_POOL_ETH = 0.0000001;
 const MIN_ETH_OUTPUT = 0.0000001;
-const GAS_COST_ETH = 0.000003;        // Base L2 actual gas
+const GAS_COST_ETH = 0.000005;        // Base L2 actual gas ~$0.001
 const MAX_DRAIN_PCT = 0.02;
 const SCALE_RAMP_FACTOR = 0.5;
 const MIN_SWAP_FC = 0.001;
@@ -67,11 +68,14 @@ const NORMAL_IMPACT_PCT = 8.0;        // Pool > $1K
 const PRICE_DROP_PAUSE_PCT = 0.20;
 const POOL_SHRINK_PAUSE_PCT = 0.30;
 
-// Gas strategy — gas-positive trades only, no selling FC for gas on tiny pools
-const MIN_GAS_RUNWAY_TXS = 5;
-const GAS_RESERVE_ETH = GAS_COST_ETH * MIN_GAS_RUNWAY_TXS;
-const GAS_WARNING_TXS = 20;
-const GAS_SLOWDOWN_TXS = 10;
+// ─── Smart Gas Management ───────────────────────────────────────
+const GAS_RESERVE_ETH = 0.0002;       // Hard minimum — ~$0.50 on Base, enough for 20+ txs
+const GAS_WARNING_ETH = 0.0005;       // Warning threshold
+const GAS_COMFORT_ETH = 0.001;        // Director tries to maintain this level
+const GAS_REFUEL_TARGET_ETH = 0.002;
+const GAS_REFUEL_MAX_FC_PCT = 0.02;   // Never sell more than 2% of wallet FC for gas
+const GAS_REFUEL_COOLDOWN_MS = 600_000; // Max 1 refuel per 10 minutes
+const GAS_REFUEL_MIN_POOL_ETH = 0.001;
 
 // Tier thresholds
 const TIERS = [
@@ -174,15 +178,26 @@ class FCPortalDirector {
     this._state.defense = this._state.defense || { level: 'normal', anomalyLog: [], sandwichCount: 0, lastEscalation: 0 };
     // Scorecard
     this._state.scorecard = this._state.scorecard || { cyclesRun: 0, swapsSucceeded: 0, swapsFailed: 0, peakPoolUsd: 0, healthScore: 100 };
+    // Gas self-management state
+    this._state.gasRefuelLog = this._state.gasRefuelLog || [];
+    this._state.gasRefuelCount = this._state.gasRefuelCount || 0;
+    this._state.totalGasRefuelETH = this._state.totalGasRefuelETH || 0;
+    this._state.totalGasRefuelFC = this._state.totalGasRefuelFC || 0;
+
     this._running = false;
     this._paused = false;
     this._pauseReason = null;
     this._timer = null;
     this._lastSwapTime = 0;
+    this._lastGasRefuelTime = 0;
     this._listeners = [];
     this._blocker = null;
     this._pairAddress = null;
     this._suggestion = null; // Current trade suggestion (suggest mode)
+
+    // Proactive gas tracking
+    this._gasSnapshots = [];
+    this._avgGasPerTrade = GAS_COST_ETH;
   }
 
   // ─── Mode Control ─────────────────────────────────────────
@@ -596,19 +611,55 @@ class FCPortalDirector {
 
       // Gas runway
       if (reserveETH < MIN_POOL_ETH) { this._blocker = `Pool ETH too low`; return; }
-      const gasRunwayTxs = Math.floor(walletETH / GAS_COST_ETH);
-      this._gasRunway = gasRunwayTxs;
-      if (gasRunwayTxs < MIN_GAS_RUNWAY_TXS) {
-        this._blocker = `Gas runway: ${gasRunwayTxs} txs. Need ${GAS_RESERVE_ETH.toFixed(6)} ETH min.`;
+
+      // ═══════════════════════════════════════════════════════════
+      // PROACTIVE GAS: Track burn rate, predict trades until empty
+      // ═══════════════════════════════════════════════════════════
+      this._trackGasBurn(walletETH);
+      const tradesLeft = this._tradesUntilEmpty(walletETH);
+      const gasRetain = this._gasRetainRatio(walletETH);
+      if (gasRetain > 0) {
+        console.log(`[FC Director] GAS FORECAST: ~${tradesLeft} trades until empty — retaining ${(gasRetain * 100).toFixed(0)}% of trade ETH as gas`);
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // SMART GAS: Self-refuel when gas is low
+      // ═══════════════════════════════════════════════════════════
+      if (this._needsGasRefuel(walletETH)) {
+        const isBuildingTier = poolUsd < 1000;
+        if (walletFC > 0.5 && reserveETH >= GAS_REFUEL_MIN_POOL_ETH) {
+          const refueled = await this._executeGasRefuel(
+            account, { reserveFC, reserveETH }, walletETH, walletFC, isBuildingTier
+          );
+          if (refueled) {
+            // Re-read wallet ETH after refuel
+            try {
+              const freshETH = await getETHBalance(account);
+              // Can't easily re-read walletFC without full state read, but ETH is the critical one
+              if (freshETH > walletETH) {
+                // Update local reference for rest of cycle
+                Object.defineProperty(state, 'walletETH', { value: freshETH, writable: true });
+              }
+            } catch {}
+          }
+        }
+      }
+      // If STILL out of gas, soft-block but don't die
+      if (walletETH < GAS_RESERVE_ETH) {
+        if (reserveETH < GAS_REFUEL_MIN_POOL_ETH || walletFC < 0.5) {
+          this._blocker = `GAS LOW: ${walletETH.toFixed(6)} ETH — pool too small to self-refuel. Send ~$0.50 ETH on Base.`;
+        } else {
+          this._blocker = `GAS LOW: ${walletETH.toFixed(6)} ETH — refuel attempt pending next cycle.`;
+        }
         return;
       }
 
       this._blocker = null;
 
-      // Gas slowdown
+      // Gas-aware cooldown — slow down when gas is getting thin
       let cooldownMult = 1;
-      if (gasRunwayTxs < GAS_SLOWDOWN_TXS) {
-        cooldownMult = 1 + (GAS_SLOWDOWN_TXS - gasRunwayTxs) / (GAS_SLOWDOWN_TXS - MIN_GAS_RUNWAY_TXS) * 3;
+      if (tradesLeft < 5) {
+        cooldownMult = 1 + (5 - tradesLeft) * 0.5; // Up to 3.5x cooldown at 0 trades
       }
 
       // ─── Calculate optimal trade ────────────────────────
@@ -705,7 +756,16 @@ class FCPortalDirector {
         const ethInWindow = this._state.totalEthEarned - this._state.totalEthReinvested - this._state.totalEthProfit;
         if (ethInWindow > 0) {
           const profitETH = ethInWindow * tier.profitRatio;
-          const reinvestETH = ethInWindow * tier.reinvestRatio;
+          let reinvestETH = ethInWindow * tier.reinvestRatio;
+
+          // ─── PROACTIVE GAS RETAIN ──────────────────────────────
+          let gasRetained = 0;
+          if (gasRetain > 0 && reinvestETH > 0) {
+            gasRetained = reinvestETH * gasRetain;
+            reinvestETH -= gasRetained;
+            console.log(`[FC Director] GAS RETAIN: keeping ${gasRetained.toFixed(6)} ETH as gas (${(gasRetain * 100).toFixed(0)}% of reinvest)`);
+          }
+
           this._state.totalEthProfit += profitETH;
           this._state.reinvestCount++;
 
@@ -724,7 +784,8 @@ class FCPortalDirector {
 
           this._state.profitLog.push({
             time: Date.now(), ethProfit: profitETH, ethReinvested: reinvestETH,
-            reason: `${tier.name}: ${(tier.profitRatio * 100)}%/${(tier.reinvestRatio * 100)}%`,
+            gasRetained,
+            reason: `${tier.name}: ${(tier.profitRatio * 100)}%/${(tier.reinvestRatio * 100)}%${gasRetained > 0 ? ` (${(gasRetain * 100).toFixed(0)}% gas retain)` : ''}`,
           });
         }
       }
@@ -796,6 +857,112 @@ class FCPortalDirector {
       if (err.code === 4001 || err.message?.includes('rejected')) return;
       console.warn('[FC Director] distributeRewards error:', err.message);
     }
+  }
+
+  // ─── Smart Gas Management ─────────────────────────────────────
+  _trackGasBurn(walletETH) {
+    this._gasSnapshots.push({ time: Date.now(), eth: walletETH });
+    if (this._gasSnapshots.length > 10) this._gasSnapshots.shift();
+    if (this._gasSnapshots.length >= 2) {
+      let totalBurn = 0, burns = 0;
+      for (let i = 1; i < this._gasSnapshots.length; i++) {
+        const delta = this._gasSnapshots[i - 1].eth - this._gasSnapshots[i].eth;
+        if (delta > 0) { totalBurn += delta; burns++; }
+      }
+      if (burns > 0) this._avgGasPerTrade = totalBurn / burns;
+    }
+  }
+
+  _tradesUntilEmpty(walletETH) {
+    const usable = Math.max(walletETH - GAS_RESERVE_ETH * 0.5, 0);
+    if (this._avgGasPerTrade <= 0) return 999;
+    return Math.floor(usable / this._avgGasPerTrade);
+  }
+
+  _gasRetainRatio(walletETH) {
+    const tradesLeft = this._tradesUntilEmpty(walletETH);
+    if (tradesLeft >= 3) return 0;
+    if (tradesLeft === 2) return 0.30;
+    if (tradesLeft === 1) return 0.60;
+    return 0.90;
+  }
+
+  _needsGasRefuel(walletETH) {
+    if (walletETH >= GAS_COMFORT_ETH) return false;
+    if (walletETH < GAS_RESERVE_ETH * 0.5) return true;
+    if (walletETH < GAS_COMFORT_ETH) return true;
+    return false;
+  }
+
+  _calcGasRefuel(pool, walletETH, walletFC, buildingMode = false) {
+    const targetETH = buildingMode ? GAS_RESERVE_ETH * 2 : GAS_REFUEL_TARGET_ETH;
+    const ethNeeded = Math.max(targetETH - walletETH, GAS_COST_ETH * 10);
+    if (ethNeeded <= 0) return null;
+
+    const x = pool.reserveFC;
+    const y = pool.reserveETH;
+    if (!x || !y || y < GAS_REFUEL_MIN_POOL_ETH) return null;
+
+    const fcNeeded = (ethNeeded * x) / (0.997 * (y - ethNeeded));
+    if (!isFinite(fcNeeded) || fcNeeded <= 0) return null;
+
+    const maxPct = buildingMode ? 0.005 : GAS_REFUEL_MAX_FC_PCT;
+    const maxFcForGas = walletFC * maxPct;
+    const fcToSell = Math.min(fcNeeded, maxFcForGas, MAX_SWAP_FC);
+    if (fcToSell < MIN_SWAP_FC) return null;
+    if (fcToSell > walletFC) return null;
+
+    const fcIn = fcToSell * 0.997;
+    const ethOut = (fcIn * y) / (x + fcIn);
+
+    const spotPrice = y / x;
+    const effectivePrice = ethOut / fcToSell;
+    const impact = ((spotPrice - effectivePrice) / spotPrice) * 100;
+    const maxImpact = buildingMode ? 1 : 5;
+    if (impact > maxImpact) return null;
+
+    return {
+      fcToSell: parseFloat(fcToSell.toFixed(4)),
+      ethExpected: ethOut,
+      priceImpact: impact,
+      reason: `Gas ${walletETH.toFixed(6)} ETH → refuel ${fcToSell.toFixed(2)} FC → ~${ethOut.toFixed(6)} ETH${buildingMode ? ' (building-safe)' : ''}`,
+    };
+  }
+
+  async _executeGasRefuel(account, pool, walletETH, walletFC, buildingMode = false) {
+    if (Date.now() - this._lastGasRefuelTime < GAS_REFUEL_COOLDOWN_MS) return false;
+
+    const plan = this._calcGasRefuel(pool, walletETH, walletFC, buildingMode);
+    if (!plan) return false;
+
+    console.log(`[FC Director] GAS REFUEL: ${plan.reason}`);
+
+    const result = await this._executeSwap(account, plan.fcToSell, plan.ethExpected);
+    if (!result.success) {
+      console.warn(`[FC Director] Gas refuel failed: ${result.error}`);
+      return false;
+    }
+
+    this._lastGasRefuelTime = Date.now();
+    this._state.gasRefuelCount++;
+    this._state.totalGasRefuelETH += result.ethReceived;
+    this._state.totalGasRefuelFC += plan.fcToSell;
+    this._state.gasRefuelLog.push({
+      time: Date.now(), fc: plan.fcToSell, eth: result.ethReceived,
+      ethBefore: walletETH, ethAfter: walletETH + result.ethReceived,
+      txHash: result.hash, impact: plan.priceImpact,
+    });
+    if (this._state.gasRefuelLog.length > 30) {
+      this._state.gasRefuelLog = this._state.gasRefuelLog.slice(-30);
+    }
+
+    this._state.totalFcSold += plan.fcToSell;
+    this._state.totalSwapCount++;
+    this._state.totalEthEarned += result.ethReceived;
+
+    console.log(`[FC Director] Gas refueled! +${result.ethReceived.toFixed(6)} ETH (sold ${plan.fcToSell.toFixed(2)} FC)`);
+    this._save();
+    return true;
   }
 
   // ─── Execute Swap ──────────────────────────────────────────
@@ -910,6 +1077,7 @@ class FCPortalDirector {
       if (this._state.poolHistory?.length > 60) this._state.poolHistory = this._state.poolHistory.slice(-60);
       if (this._state.defense?.anomalyLog?.length > 20) this._state.defense.anomalyLog = this._state.defense.anomalyLog.slice(-20);
       if (this._state.distributionLog?.length > 20) this._state.distributionLog = this._state.distributionLog.slice(-20);
+      if (this._state.gasRefuelLog?.length > 15) this._state.gasRefuelLog = this._state.gasRefuelLog.slice(-15);
       const data = JSON.stringify(this._state);
       localStorage.setItem(STORAGE_KEY, data);
     } catch (e) {
@@ -970,10 +1138,20 @@ class FCPortalDirector {
       swapsLastHour: recentSwaps.length,
       // Gas
       gasReserve: GAS_RESERVE_ETH,
-      gasRunwayTxs: this._gasRunway || 0,
-      gasWarning: this._gasRunway < GAS_WARNING_TXS ? `${this._gasRunway} txs remaining` : null,
+      gasWarningETH: GAS_WARNING_ETH,
+      gasComfort: GAS_COMFORT_ETH,
+      gasSelfFunding: true,
       gasCostPerTx: GAS_COST_ETH,
       totalGasSpent: this._state.totalGasSpent,
+      // Proactive gas forecast
+      gasTradesUntilEmpty: this._tradesUntilEmpty(0), // updated per cycle
+      gasAvgBurnPerTrade: this._avgGasPerTrade,
+      gasRetainPct: this._gasRetainRatio(0) * 100,
+      // Gas self-management
+      gasRefuelCount: this._state.gasRefuelCount,
+      totalGasRefuelETH: this._state.totalGasRefuelETH,
+      totalGasRefuelFC: this._state.totalGasRefuelFC,
+      recentGasRefuels: (this._state.gasRefuelLog || []).slice(-5).reverse(),
       totalSwapCount: this._state.totalSwapCount,
       netProfitEth: this._state.totalEthEarned - this._state.totalGasSpent - this._state.totalEthReinvested,
       netProfitUsd: (this._state.totalEthEarned - this._state.totalGasSpent - this._state.totalEthReinvested) * ethUsd,
