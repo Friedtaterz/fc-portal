@@ -69,12 +69,13 @@ const PRICE_DROP_PAUSE_PCT = 0.20;
 const POOL_SHRINK_PAUSE_PCT = 0.30;
 
 // ─── Smart Gas Management ───────────────────────────────────────
-const GAS_RESERVE_ETH = 0.0002;       // Hard minimum — ~$0.50 on Base, enough for 20+ txs
-const GAS_WARNING_ETH = 0.0005;       // Warning threshold
-const GAS_COMFORT_ETH = 0.001;        // Director tries to maintain this level
-const GAS_REFUEL_TARGET_ETH = 0.002;
+const GAS_RESERVE_ETH = 0.0005;       // Hard minimum — never go below this
+const GAS_WARNING_ETH = 0.001;        // Warning threshold
+const GAS_COMFORT_ETH = 0.002;        // Director tries to maintain this level
+const GAS_REFUEL_TARGET_ETH = 0.003;
 const GAS_REFUEL_MAX_FC_PCT = 0.02;   // Never sell more than 2% of wallet FC for gas
-const GAS_REFUEL_COOLDOWN_MS = 600_000; // Max 1 refuel per 10 minutes
+const GAS_REFUEL_COOLDOWN_MS = 300_000; // Max 1 refuel per 5 minutes
+const GAS_PER_TX_ESTIMATE = 0.00003;  // ~30K gwei estimate per Base L2 tx (approve+swap+reinvest)
 const GAS_REFUEL_MIN_POOL_ETH = 0.001;
 
 // Tier thresholds
@@ -719,7 +720,12 @@ class FCPortalDirector {
       }
 
       // ─── AUTO MODE: Execute the trade ────────────────────
+      // Final gas gate — re-check balance right before executing
       const ethBefore = await getETHBalance(account);
+      if (ethBefore < GAS_RESERVE_ETH + GAS_PER_TX_ESTIMATE * 2) {
+        this._blocker = `GAS GATE: ${ethBefore.toFixed(6)} ETH — too low to safely execute (need ${(GAS_RESERVE_ETH + GAS_PER_TX_ESTIMATE * 2).toFixed(6)})`;
+        return;
+      }
       const result = await this._executeSwap(account, sizing.amount, sizing.ethOut);
       if (!result.success) {
         if (result.error === 'rejected') this.pause('User rejected transaction');
@@ -771,8 +777,10 @@ class FCPortalDirector {
 
           if (reinvestETH > 0.0000001) {
             const freshETH = await getETHBalance(account);
-            const earnedAvailable = Math.min(reinvestETH, Math.max(freshETH - GAS_RESERVE_ETH * 2, 0));
-            if (earnedAvailable > 0.0000001) {
+            // Reserve enough for next full trade cycle: approve + swap + reinvest approve + reinvest = 4 txs
+            const gasFloor = Math.max(GAS_COMFORT_ETH, GAS_PER_TX_ESTIMATE * 8);
+            const earnedAvailable = Math.min(reinvestETH, Math.max(freshETH - gasFloor, 0));
+            if (earnedAvailable > 0.0000001 && freshETH > gasFloor + earnedAvailable + GAS_PER_TX_ESTIMATE * 2) {
               const ratio = reserveFC / reserveETH;
               const fcForReinvest = Math.min(earnedAvailable * ratio, walletFC * 0.25);
               if (fcForReinvest >= 0.001) {
@@ -832,6 +840,13 @@ class FCPortalDirector {
       const eth = window.ethereum;
       if (!eth) return;
 
+      // Gas safety: skip distribution if gas is low
+      const currentETH = await getETHBalance(account);
+      if (currentETH < GAS_COMFORT_ETH) {
+        console.log(`[FC Director] Pool distribution deferred — gas ${currentETH.toFixed(6)} ETH below comfort`);
+        return;
+      }
+
       const txHash = await eth.request({
         method: 'eth_sendTransaction',
         params: [{ from: account, to: FC_POOLS, data, gas: '0x' + (200000).toString(16) }],
@@ -874,9 +889,11 @@ class FCPortalDirector {
   }
 
   _tradesUntilEmpty(walletETH) {
-    const usable = Math.max(walletETH - GAS_RESERVE_ETH * 0.5, 0);
-    if (this._avgGasPerTrade <= 0) return 999;
-    return Math.floor(usable / this._avgGasPerTrade);
+    const usable = Math.max(walletETH - GAS_RESERVE_ETH, 0);
+    // A full trade cycle = approve + swap + possible reinvest (approve + addLiquidity) = up to 4 txs
+    const costPerCycle = Math.max(this._avgGasPerTrade, GAS_PER_TX_ESTIMATE * 4);
+    if (costPerCycle <= 0) return 999;
+    return Math.floor(usable / costPerCycle);
   }
 
   _gasRetainRatio(walletETH) {
@@ -1027,6 +1044,13 @@ class FCPortalDirector {
   async _addLiquidity(account, fcAmount, ethAmount) {
     const eth = window.ethereum;
     try {
+      // Gas safety: abort if reinvesting would leave wallet below comfort level
+      const currentETH = await getETHBalance(account);
+      const ethAfterReinvest = currentETH - ethAmount - GAS_PER_TX_ESTIMATE * 2; // 2 txs: approve + addLiquidity
+      if (ethAfterReinvest < GAS_COMFORT_ETH) {
+        console.log(`[FC Director] Reinvest skipped — would leave ${ethAfterReinvest.toFixed(6)} ETH (need ${GAS_COMFORT_ETH})`);
+        return;
+      }
       const routerPad = UNISWAP_ROUTER.slice(2).toLowerCase().padStart(64, '0');
       const approveAmt = BigInt(Math.floor(fcAmount * 1e18));
       const approveData = SEL.approve + routerPad + approveAmt.toString(16).padStart(64, '0');
